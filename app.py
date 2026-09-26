@@ -454,6 +454,32 @@ def init_db():
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, ("សាលាបឋមសិក្សា ស្លែងស្ពាន", "សាត ក្រូត", "ភូមិខ្មែរ", "រោង", "ស្រីស្នំ", "សៀមរាប", "090 854 133", "", "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ"))
 
+  # តារាងតម្លៃគោលកម្រិតប្រព័ន្ធ (Admin Master Benchmark Prices)
+  cursor.execute("""
+    CREATE TABLE IF NOT EXISTS benchmark_prices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_name TEXT UNIQUE,
+        unit TEXT,
+        group_name TEXT,
+        category TEXT,
+        base_price REAL,
+        high_10 REAL,
+        low_10 REAL,
+        updated_at TEXT,
+        updated_by TEXT
+    )""")
+  cursor.execute("SELECT COUNT(*) FROM benchmark_prices")
+  if cursor.fetchone()[0] == 0:
+    for it in SUPPLIER_PRODUCT_CATALOG:
+      b_p = float(it.get("base_avg", 0) or it.get("default_p1", 0))
+      h_10 = round(b_p * 1.10, 2)
+      l_10 = round(b_p * 0.90, 2)
+      cursor.execute("""
+        INSERT INTO benchmark_prices (item_name, unit, group_name, category, base_price, high_10, low_10, updated_at, updated_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), 'system')
+        ON CONFLICT(item_name) DO NOTHING
+      """, (it["name"], it.get("unit", "1គីឡូ"), it.get("group", "ស្បៀងគោល"), it.get("category", "បន្លែ"), b_p, h_10, l_10))
+
   conn.commit()
 
 
@@ -626,9 +652,17 @@ def delete_supplier(supplier_id):
 def get_catalog_base_price(item_name, school_name=None, commune=None):
   """
   ស្វែងរកតម្លៃគោលនៃមុខទំនិញ៖
-  ១. ពិនិត្យមើលតម្លៃគោលក្នុង products (price_level='school' ឬ 'commune')
-  ២. ប្រសិនបើគ្មាន ប្រើប្រាស់តម្លៃ base_avg ពី SUPPLIER_PRODUCT_CATALOG (ឯកសារ Excel)
+  ១. ពិនិត្យមើលតម្លៃគោលក្នុង benchmark_prices (ដែល Admin បានកំណត់)
+  ២. ពិនិត្យមើលតម្លៃក្នុង products (price_level='school' ឬ 'commune')
+  ៣. ប្រើប្រាស់តម្លៃ base_avg ពី SUPPLIER_PRODUCT_CATALOG (ឯកសារ Excel)
   """
+  try:
+    row_bm = cursor.execute("SELECT base_price FROM benchmark_prices WHERE item_name=?", (item_name,)).fetchone()
+    if row_bm and row_bm[0] is not None and float(row_bm[0]) > 0:
+      return float(row_bm[0])
+  except Exception:
+    pass
+
   if school_name:
     try:
       row = cursor.execute(
@@ -3677,7 +3711,7 @@ menu = st.sidebar.radio(
         "📊 Dashboard",
         "📍 គ្រប់គ្រងទីតាំង និងសាលារៀន",
         "🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្គត់ផ្គង់",
-        "📦 បញ្ជីមុខទំនិញ និងតម្លៃ (តាមសាលា / តាមឃុំ)",
+        "📦 បញ្ជីគ្រប់គ្រងទំនិញ និងតម្លៃ",
         "📝 កត់ត្រា និងចេញវិក្កយបត្រប្រចាំថ្ងៃ",
         "📑 សំណើទូទាត់ប្រចាំខែ",
         "🛒 បញ្ជីទិញទំនិញចូល & ជំពាក់អ្នកផ្គត់ផ្គង់",
@@ -4725,861 +4759,241 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
           st.rerun()
 
 
-# ================= ៤. បញ្ជីមុខទំនិញ និងកំណត់តម្លៃ (តាមសាលា ឬ តាមឃុំ) =================
-elif menu in ["📦 បញ្ជីមុខទំនិញ និងតម្លៃ (តាមសាលា / តាមឃុំ)", "📦 បញ្ជីមុខទំនិញតាមឃុំ (វគ្គ១/វគ្គ២/មធ្យម)"]:
-  st.title("📦 បញ្ជីមុខទំនិញ និងកំណត់តម្លៃ (តាមសាលា ឬ តាមឃុំ)")
-  st.info(
-      "💡 កំណត់មុខទំនិញ និងតម្លៃទៅតាម **សាលារៀនរៀងៗខ្លួន** ឬ **តាមឃុំ/សង្កាត់រួម** ដោយមានការចាត់ថ្នាក់ប្រភេទស្វ័យប្រវត្ត (អង្ករ, ប្រេងឆា, អំបិល, ត្រី សាច់ ស៊ុត, បន្លែ) និងគណនាតម្លៃមធ្យមស្វ័យប្រវត្តិ។"
-  )
+# ================= ៤. បញ្ជីគ្រប់គ្រងទំនិញ និងតម្លៃ (Admin Benchmark Matrix) =================
+elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ និងតម្លៃ", "📦 បញ្ជីមុខទំនិញ និងតម្លៃ (តាមសាលា / តាមឃុំ)", "📦 បញ្ជីមុខទំនិញតាមឃុំ (វគ្គ១/វគ្គ២/មធ្យម)"]:
+  st.title("📦 បញ្ជីគ្រប់គ្រងទំនិញ និងកំណត់តម្លៃគោល")
+  st.caption("🛡️ សម្រាប់តែអ្នកគ្រប់គ្រង (Admin) | ចាប់យកមុខទំនិញទាំង ៦១ មុខពី Excel កំណត់តម្លៃគោល ព្រមទាំងគណនាតម្លៃខ្ពស់ជាង ១០% និងទាបជាង ១០% ដោយស្វ័យប្រវត្តិ")
 
-  # ជម្រើសកម្រិតនៃការកំណត់តម្លៃ
-  level_choice = st.radio(
-      "🎯 ជម្រើសកម្រិតនៃការកំណត់តម្លៃទំនិញ៖",
-      [
-          "🏛️ កំណត់តាមឃុំ/សង្កាត់ (Commune Level - អនុវត្តចំពោះគ្រប់សាលាក្នុងឃុំ)", 
-          "🏫 កំណត់តាមសាលារៀន (School Level - តម្លៃជាក់លាក់តាមសាលានីមួយៗ)",
-          "🚚 កំណត់តាមអ្នកផ្គត់ផ្គង់ (Supplier Level - តម្លៃតាមកិច្ចសន្យាអ្នកផ្គត់ផ្គង់)",
-      ],
-      index=0,
-      horizontal=True,
-      key="prod_level_choice"
-  )
-  is_school_mode = "តាមសាលារៀន" in level_choice
-  is_supplier_mode = "តាមអ្នកផ្គត់ផ្គង់" in level_choice
+  user_info = st.session_state.get("user_info") or {}
+  user_role = str(user_info.get("role", "")).strip().lower()
+  is_admin = (user_role == "admin")
 
-  all_provinces = get_provinces()
-
-  if is_supplier_mode:
-    all_sups = get_all_suppliers()
-    sup_names = sorted(list(set([s["supplier_name"] for s in all_sups if s.get("supplier_name")])))
-    col_sup1, col_sup2 = st.columns([1.5, 1.5])
-    with col_sup1:
-      sup_choice = st.selectbox(
-          "🚚 ជ្រើសរើសអ្នកផ្គត់ផ្គង់",
-          ["-- ជ្រើសរើសអ្នកផ្គត់ផ្គង់ --"] + sup_names + ["➕ វាយឈ្មោះអ្នកផ្គត់ផ្គង់ថ្មី..."],
-          key="prod_sup_choice"
-      )
-      if sup_choice == "➕ វាយឈ្មោះអ្នកផ្គត់ផ្គង់ថ្មី...":
-        sup_val = st.text_input("វាយឈ្មោះអ្នកផ្គត់ផ្គង់ថ្មី", key="prod_sup_in").strip()
-      elif sup_choice != "-- ជ្រើសរើសអ្នកផ្គត់ផ្គង់ --":
-        sup_val = sup_choice
-      else:
-        sup_val = ""
-    with col_sup2:
-      sup_sch_choice = st.selectbox(
-          "🏫 អនុវត្តចំពោះសាលា (ជម្រើសបន្ថែម)",
-          ["-- គ្រប់សាលារបស់អ្នកផ្គត់ផ្គង់នេះ --"] + get_all_schools(),
-          key="prod_sup_sch"
-      )
-      s_val = sup_sch_choice if sup_sch_choice != "-- គ្រប់សាលារបស់អ្នកផ្គត់ផ្គង់នេះ --" else ""
-    c_val = ""
-    p_val = None
-    d_val = None
-    if sup_val:
-      st.success(f"📍 **គោលដៅកំណត់តម្លៃ៖** អ្នកផ្គត់ផ្គង់ **«{sup_val}»** {f'(សាលា: {s_val})' if s_val else '(គ្រប់សាលាដែលផ្គត់ផ្គង់)'}")
-    else:
-      st.warning("⚠️ សូមជ្រើសរើស **អ្នកផ្គត់ផ្គង់** ខាងលើដើម្បីចាប់ផ្ដើមកំណត់តម្លៃ!")
-
-  elif is_school_mode:
-    col_mp, col_md, col_mc, col_ms = st.columns([1, 1, 1, 1.3])
-    with col_mp:
-      p_choice = st.selectbox("ខេត្ត/ក្រុង", ["-- ទាំងអស់ --"] + all_provinces, key="prod_p_sch")
-      p_val = p_choice if p_choice != "-- ទាំងអស់ --" else None
-
-    all_districts = get_districts(p_val) if p_val else get_districts()
-    with col_md:
-      d_choice = st.selectbox("ស្រុក/ខណ្ឌ", ["-- ទាំងអស់ --"] + all_districts, key="prod_d_sch")
-      d_val = d_choice if d_choice != "-- ទាំងអស់ --" else None
-
-    all_communes = get_communes(p_val, d_val) if (p_val and d_val) else get_communes()
-    with col_mc:
-      c_choice = st.selectbox("ឃុំ/សង្កាត់", ["-- ទាំងអស់ --"] + all_communes + ["➕ វាយបញ្ចូលឃុំថ្មី..."], key="prod_c_sch")
-      if c_choice == "➕ វាយបញ្ចូលឃុំថ្មី...":
-        c_val = st.text_input("វាយបញ្ចូលឃុំថ្មី", key="prod_c_in_sch").strip()
-      elif c_choice != "-- ទាំងអស់ --":
-        c_val = c_choice
-      else:
-        c_val = ""
-
-    schools_in_scope = get_filtered_schools(p_val, d_val, c_val)
-    with col_ms:
-      s_choice = st.selectbox(
-          "🏫 សាលារៀន",
-          ["-- ជ្រើសរើសសាលា --"] + schools_in_scope + ["➕ វាយបញ្ចូលសាលាថ្មី..."],
-          key="prod_s_sch"
-      )
-      if s_choice == "➕ វាយបញ្ចូលសាលាថ្មី...":
-        s_val = st.text_input("វាយឈ្មោះសាលាថ្មី", key="prod_s_in_sch").strip()
-      elif s_choice != "-- ជ្រើសរើសសាលា --":
-        s_val = s_choice
-      else:
-        s_val = ""
-
-    if s_val:
-      st.success(f"📍 **គោលដៅកំណត់តម្លៃ៖** សាលារៀន **«{s_val}»** {f'(ឃុំ: {c_val})' if c_val else ''} {f'(ស្រុក: {d_val})' if d_val else ''} {f'(ខេត្ត: {p_val})' if p_val else ''}")
-    else:
-      st.warning("⚠️ សូមជ្រើសរើស **សាលារៀន** ខាងលើដើម្បីចាប់ផ្ដើមកំណត់តម្លៃ ឬពិនិត្យមុខទំនិញ!")
-
+  if not is_admin:
+    st.error("⛔ **សិទ្ធិចូលប្រើប្រាស់ត្រូវបានកម្រិត (Access Restricted)**")
+    st.warning("🔒 ទំព័រ **«បញ្ជីគ្រប់គ្រងទំនិញ និងតម្លៃ»** នេះ ត្រូវបានអនុញ្ញាតឱ្យចូលមើល ប្រើប្រាស់ និងបញ្ចូល/កែប្រែតម្លៃត្រឹមតែគណនីអ្នកគ្រប់គ្រង (**Admin**) ប៉ុណ្ណោះ!")
+    col_auth1, col_auth2 = st.columns([2, 1])
+    with col_auth1:
+      st.info(f"👤 គណនីបច្ចុប្បន្នរបស់អ្នក៖ **{user_info.get('name', 'User')}** (តួនាទី: **{user_info.get('role', 'Guest')}** | Username: `{user_info.get('username', 'guest')}`)\n\n👉 សូម Login ចូលគណនី **admin** ដើម្បីគ្រប់គ្រងតម្លៃគោលទំនិញ។")
+    with col_auth2:
+      st.markdown("##### 🔑 ចូលគណនី Admin ផ្ទាល់នៅទីនេះ")
+      adm_u = st.text_input("ឈ្មោះគណនី (Username)", value="admin", key="quick_adm_u")
+      adm_p = st.text_input("ពាក្យសម្ងាត់ (Password)", type="password", key="quick_adm_p")
+      if st.button("🔓 ចូលប្រើប្រាស់ជា Admin", key="btn_quick_adm_submit", use_container_width=True, type="primary"):
+        if login(adm_u, adm_p):
+          st.success("✅ បានចូលជា Admin ជោគជ័យ!")
+          st.rerun()
+        else:
+          st.error("ពាក្យសម្ងាត់មិនត្រឹមត្រូវ!")
   else:
-    col_mp, col_md, col_mc = st.columns(3)
-    with col_mp:
-      p_choice = st.selectbox("ខេត្ត/ក្រុង", ["-- ទាំងអស់ --"] + all_provinces, key="prod_p_comm")
-      p_val = p_choice if p_choice != "-- ទាំងអស់ --" else None
-
-    all_districts = get_districts(p_val) if p_val else get_districts()
-    with col_md:
-      d_choice = st.selectbox("ស្រុក/ខណ្ឌ", ["-- ទាំងអស់ --"] + all_districts, key="prod_d_comm")
-      d_val = d_choice if d_choice != "-- ទាំងអស់ --" else None
-
-    all_communes = get_communes(p_val, d_val) if (p_val and d_val) else get_communes()
-    with col_mc:
-      c_choice = st.selectbox(
-          "ឃុំ/សង្កាត់",
-          ["-- ជ្រើសរើសឃុំ --"] + all_communes + ["➕ វាយបញ្ចូលឃុំថ្មី..."],
-          key="prod_c_comm",
-      )
-      if c_choice == "➕ វាយបញ្ចូលឃុំថ្មី...":
-        c_val = st.text_input("វាយបញ្ចូលឃុំថ្មី", key="prod_c_in_comm").strip()
-      elif c_choice != "-- ជ្រើសរើសឃុំ --":
-        c_val = c_choice
-      else:
-        c_val = ""
-    s_val = ""
-
-    if c_val:
-      st.success(f"📍 **គោលដៅកំណត់តម្លៃ៖** ឃុំ/សង្កាត់ **«{c_val}»** {f'(ស្រុក: {d_val})' if d_val else ''} {f'(ខេត្ត: {p_val})' if p_val else ''} — គ្រប់សាលាក្នុងឃុំនេះនឹងប្រើប្រាស់តម្លៃនេះជាគោល")
-    else:
-      st.warning("⚠️ សូមជ្រើសរើស **ឃុំ/សង្កាត់** ខាងលើដើម្បីចាប់ផ្ដើមកំណត់តម្លៃ ឬពិនិត្យមុខទំនិញ!")
-
-  if is_supplier_mode:
-    target_label = f"អ្នកផ្គត់ផ្គង់ «{sup_val}»" + (f" (សាលា «{s_val}»)" if s_val else "")
-  elif is_school_mode:
-    target_label = f"សាលារៀន «{s_val}»" if s_val else ""
-  else:
-    target_label = f"ឃុំ «{c_val}»" if c_val else ""
-
-
-  prod_tab1, prod_tab2, prod_tab3, prod_tab4 = st.tabs([
-      "➕ បន្ថែមមុខទំនិញថ្មី",
-      "✏️ កែប្រែ / 🗑️ លុបមុខទំនិញ",
-      "📅 កំណត់កាលបរិច្ឆេទវគ្គរួម",
-      "📥 នាំចូលមុខទំនិញពីក្រៅ (Excel, Word, CSV, PDF, រូបភាព)",
-  ])
-
-  def_p1_s, def_p1_e, def_p2_s, def_p2_e = get_commune_phase_dates(c_val, s_val if is_school_mode else None)
-
-  # ----------------- TAB 1: បន្ថែមមុខទំនិញថ្មី -----------------
-  with prod_tab1:
-    st.subheader(
-        f"➕ បន្ថែមមុខទំនិញសម្រាប់: {target_label if target_label else '(សូមជ្រើសរើសគោលដៅខាងលើ)'}"
+    # ----------------- ADMIN BENCHMARK MANAGEMENT -----------------
+    st.info(
+        "💡 មុខទំនិញទាំង **៦១ មុខ** ត្រូវបានចាប់យកដោយស្វ័យប្រវត្តិចេញពីសន្លឹក «តម្លៃទំនិញ» នៃឯកសារ Excel «បញ្ជីមុខម្ហូបដែលត្រូវបញ្ជាទិញ_2026.xlsm»។ "
+        "រាល់ការកែប្រែតម្លៃគោលនៅទីនេះ នឹងត្រូវបានធ្វើបច្ចុប្បន្នភាពចូលក្នុង Database សម្រាប់យកទៅប្រៀបធៀប (+១០% / -១០%) "
+        "ជាមួយតម្លៃអ្នកផ្គត់ផ្គង់ និងការចេញវិក្កយបត្រទូទាំងប្រព័ន្ធ។"
     )
 
-    col_pname, col_pcat = st.columns([2, 1.2])
-    with col_pname:
-      std_options = ["-- ជ្រើសរើសមុខទំនិញស្ដង់ដារ (៦១ មុខដូចក្នុងរូប) --"] + STANDARD_PRODUCT_ITEMS + ["➕ វាយបញ្ចូលឈ្មោះទំនិញផ្សេងទៀត..."]
-      sel_std_item = st.selectbox(
-          "📦 ជ្រើសរើសមុខទំនិញ (គំរូស្ដង់ដារដូចក្នុងរូប)",
-          std_options,
-          key="sel_std_item"
-      )
-      if sel_std_item == "➕ វាយបញ្ចូលឈ្មោះទំនិញផ្សេងទៀត...":
-        p_name = st.text_input("វាយឈ្មោះមុខទំនិញថ្មី", key="add_p_name_custom").strip()
-      elif sel_std_item != "-- ជ្រើសរើសមុខទំនិញស្ដង់ដារ (៦១ មុខដូចក្នុងរូប) --":
-        p_name = sel_std_item
-      else:
-        p_name = ""
+    # Load current benchmark prices from database
+    bm_rows = cursor.execute("""
+      SELECT item_name, base_price, high_10, low_10, unit, group_name, category
+      FROM benchmark_prices
+    """).fetchall()
+    bm_db_map = {r[0]: {"base": float(r[1] or 0), "high": float(r[2] or 0), "low": float(r[3] or 0), "unit": r[4], "group": r[5], "cat": r[6]} for r in bm_rows}
 
-    with col_pcat:
-      auto_cat = classify_item_category(p_name) if p_name else STANDARD_CATEGORIES[0]
-      cat_opts = STANDARD_CATEGORIES + ["ផ្សេងៗ"]
-      cat_idx = cat_opts.index(auto_cat) if auto_cat in cat_opts else 0
-      p_cat = st.selectbox(
-          "🏷️ ប្រភេទសម្គាល់ (ចាត់ថ្នាក់ស្វ័យប្រវត្តិ)",
-          cat_opts,
-          index=cat_idx,
-          key=f"add_pcat_{p_name[:8] if p_name else 'def'}"
-      )
-      if p_name:
-        st.caption(f"💡 ប្រព័ន្ធចាត់ថ្នាក់ជា៖ **{format_category_badge(p_cat)}** ដោយស្វ័យប្រវត្តិ")
-
-    # យកតម្លៃលំនាំដើមពីកាតាឡុកបើមាន
-    cat_match = next((item for item in STANDARD_PRODUCT_CATALOG if item["name"] == p_name), None)
-    def_price_p1 = float(cat_match["price_phase1"]) if cat_match else 0.0
-    def_price_p2 = float(cat_match["price_phase2"]) if cat_match else def_price_p1
-
-    col_ph1, col_ph2 = st.columns(2)
-    with col_ph1:
-      st.markdown("##### 🟢 កំណត់តម្លៃ និងកាលបរិច្ឆេទ វគ្គ១")
-      p_price1 = st.number_input(
-          "តម្លៃវគ្គ ១ (៛)",
-          min_value=0.0,
-          value=def_price_p1,
-          step=100.0,
-          format="%.0f",
-          key=f"add_p1_{p_name[:8] if p_name else 'def'}",
-      )
-      c1_s, c1_e = st.columns(2)
-      with c1_s:
-        p1_start = st.date_input(
-            "ថ្ងៃចាប់ផ្ដើម វគ្គ១",
-            value=parse_date_safe(def_p1_s),
-            key="add_p1_s",
-        )
-      with c1_e:
-        p1_end = st.date_input(
-            "ថ្ងៃបញ្ចប់ វគ្គ១",
-            value=parse_date_safe(def_p1_e),
-            key="add_p1_e",
-        )
-
-    with col_ph2:
-      st.markdown("##### 🔵 កំណត់តម្លៃ និងកាលបរិច្ឆេទ វគ្គ២")
-      p_price2 = st.number_input(
-          "តម្លៃវគ្គ ២ (៛)",
-          min_value=0.0,
-          value=def_price_p2,
-          step=100.0,
-          format="%.0f",
-          key=f"add_p2_{p_name[:8] if p_name else 'def'}",
-      )
-      c2_s, c2_e = st.columns(2)
-      with c2_s:
-        p2_start = st.date_input(
-            "ថ្ងៃចាប់ផ្ដើម វគ្គ២",
-            value=parse_date_safe(def_p2_s),
-            key="add_p2_s",
-        )
-      with c2_e:
-        p2_end = st.date_input(
-            "ថ្ងៃបញ្ចប់ វគ្គ២",
-            value=parse_date_safe(def_p2_e),
-            key="add_p2_e",
-        )
-
-    auto_avg = (p_price1 + p_price2) / 2.0
-    st.metric("📊 តម្លៃមធ្យម (គណនាស្វ័យប្រវត្តិ)", format_riel(auto_avg))
-
-    if st.button("💾 រក្សាទុកមុខទំនិញ", use_container_width=True, type="primary"):
-      if is_supplier_mode and not sup_val:
-        st.error("សូមជ្រើសរើស ឬវាយបញ្ចូលឈ្មោះអ្នកផ្គត់ផ្គង់សិន!")
-      elif is_school_mode and not s_val:
-        st.error("សូមជ្រើសរើស ឬវាយបញ្ចូលឈ្មោះសាលារៀនសិន!")
-      elif not is_school_mode and not is_supplier_mode and not c_val:
-        st.error("សូមជ្រើសរើស ឬវាយបញ្ចូលឃុំសិន!")
-      elif not p_name.strip():
-        st.error("សូមជ្រើសរើស ឬវាយបញ្ចូលឈ្មោះមុខទំនិញ!")
-      elif p1_start > p1_end:
-        st.error("កាលបរិច្ឆេទចាប់ផ្ដើមវគ្គ១ មិនអាចធំជាងថ្ងៃបញ្ចប់បានទេ!")
-      elif p2_start > p2_end:
-        st.error("កាលបរិច្ឆេទចាប់ផ្ដើមវគ្គ២ មិនអាចធំជាងថ្ងៃបញ្ចប់បានទេ!")
-      else:
-        target_prov = p_val or ""
-        target_dist = d_val or ""
-        target_comm = c_val or ""
-        target_sch = s_val or ""
-        target_sup = sup_val if is_supplier_mode else ""
-        target_lvl = "supplier" if is_supplier_mode else ("school" if is_school_mode else "commune")
-
-        # ពិនិត្យថាមានទំនិញនេះស្រាប់ក្នុង Scope នេះឬនៅ
-        chk_sql = "SELECT id FROM products WHERE item_name=? AND price_level=?"
-        chk_params = [p_name.strip(), target_lvl]
-        if is_supplier_mode:
-          chk_sql += " AND supplier_name=? AND school_name=?"
-          chk_params.extend([target_sup, target_sch])
-        elif is_school_mode:
-          chk_sql += " AND school_name=?"
-          chk_params.append(target_sch)
+    # Initialize session state for matrix
+    if "admin_bm_matrix" not in st.session_state:
+      st.session_state["admin_bm_matrix"] = {}
+      for it in SUPPLIER_PRODUCT_CATALOG:
+        inm = it["name"]
+        db_item = bm_db_map.get(inm)
+        if db_item and db_item["base"] > 0:
+          b_val = db_item["base"]
         else:
-          chk_sql += " AND commune=?"
-          chk_params.append(target_comm)
-        row_chk = cursor.execute(chk_sql, tuple(chk_params)).fetchone()
+          b_val = float(it.get("base_avg", 0) or it.get("default_p1", 0))
+        st.session_state["admin_bm_matrix"][inm] = float(b_val)
 
-        if row_chk:
-          cursor.execute(
-              """
-              UPDATE products 
-              SET price_phase1=?, price_phase2=?, price_avg=?,
-                  phase1_start=?, phase1_end=?, phase2_start=?, phase2_end=?,
-                  category=?, province=?, district=?, commune=?, school_name=?, price_level=?, supplier_name=?
-              WHERE id=?
-              """,
-              (p_price1, p_price2, auto_avg, str(p1_start), str(p1_end), str(p2_start), str(p2_end),
-               p_cat, target_prov, target_dist, target_comm, target_sch, target_lvl, target_sup, row_chk[0])
+    # Top KPI Metrics
+    kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+    with kpi1:
+      st.metric("📦 មុខទំនិញសរុប", f"{len(SUPPLIER_PRODUCT_CATALOG)} មុខ", delta="ពី Excel")
+    with kpi2:
+      cnt_g1 = len([x for x in SUPPLIER_PRODUCT_CATALOG if x.get("group") == "ស្បៀងគោល"])
+      st.metric("🌾 ស្បៀងគោល", f"{cnt_g1} មុខ", delta="វគ្គលើ")
+    with kpi3:
+      cnt_g2 = len([x for x in SUPPLIER_PRODUCT_CATALOG if x.get("group") == "បន្លែគោល"])
+      st.metric("🥦 បន្លែគោល", f"{cnt_g2} មុខ", delta="វគ្គលើ")
+    with kpi4:
+      cnt_g3 = len([x for x in SUPPLIER_PRODUCT_CATALOG if x.get("group") == "ស្បៀងបន្ថែម"])
+      st.metric("🥩 ស្បៀងបន្ថែម", f"{cnt_g3} មុខ", delta="វគ្គក្រោម")
+    with kpi5:
+      cnt_g4 = len([x for x in SUPPLIER_PRODUCT_CATALOG if x.get("group") == "បន្លែបន្ថែម"])
+      st.metric("🥕 បន្លែបន្ថែម", f"{cnt_g4} មុខ", delta="វគ្គក្រោម")
+
+    st.markdown("---")
+
+    # Filter Controls
+    col_f_grp, col_f_cat, col_f_search = st.columns([1.5, 1.5, 1.2])
+    with col_f_grp:
+      filter_grp = st.segmented_control(
+          "🏷️ ជ្រើសរើសក្រុមទំនិញ៖",
+          options=["🌟 ទាំងអស់", "🌾 ស្បៀងគោល", "🥦 បន្លែគោល", "🥩 ស្បៀងបន្ថែម", "🥕 បន្លែបន្ថែម"],
+          default="🌟 ទាំងអស់",
+          key="admin_bm_grp_filter"
+      ) or "🌟 ទាំងអស់"
+    with col_f_cat:
+      filter_cat = st.segmented_control(
+          "🛒 ជ្រើសរើសប្រភេទទំនិញ៖",
+          options=["🌟 ទាំងអស់", "🍚 អង្ករ", "🫗 ប្រេងឆា", "🧂 អំបិល", "🥩 ត្រី សាច់ ស៊ុត", "🥬 បន្លែ"],
+          default="🌟 ទាំងអស់",
+          key="admin_bm_cat_filter"
+      ) or "🌟 ទាំងអស់"
+    with col_f_search:
+      search_kw = st.text_input("🔍 ស្វែងរកមុខទំនិញ...", placeholder="វាយឈ្មោះទំនិញ...", key="admin_bm_search_kw").strip()
+
+    c_grp_clean = filter_grp.replace("🌾 ", "").replace("🥦 ", "").replace("🥩 ", "").replace("🥕 ", "").replace("🌟 ", "").strip()
+    c_cat_clean = filter_cat.replace("🍚 ", "").replace("🫗 ", "").replace("🧂 ", "").replace("🥩 ", "").replace("🥬 ", "").replace("🌟 ", "").strip()
+
+    # Filter products
+    filtered_catalog = []
+    for it in SUPPLIER_PRODUCT_CATALOG:
+      if c_grp_clean != "ទាំងអស់" and it.get("group") != c_grp_clean:
+        continue
+      if c_cat_clean != "ទាំងអស់" and it.get("category") != c_cat_clean:
+        continue
+      if search_kw and (search_kw.lower() not in it["name"].lower()):
+        continue
+      filtered_catalog.append(it)
+
+    st.markdown(f"##### 📋 បញ្ជីមុខទំនិញ (កំពុងបង្ហាញ {len(filtered_catalog)} នៃ {len(SUPPLIER_PRODUCT_CATALOG)} មុខ)")
+
+    # Table Header Row
+    st.markdown("""
+    <div style="background: #f1f5f9; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; font-weight: 700; color: #1e293b; margin-bottom: 8px;">
+      <div style="display: flex; align-items: center;">
+        <div style="width: 5%;">ល.រ</div>
+        <div style="width: 32%;">មុខទំនិញ & ឯកត្តា (ពី Excel)</div>
+        <div style="width: 21%; text-align: center;">🏷️ តម្លៃគោល (៛) [បញ្ចូល]</div>
+        <div style="width: 21%; text-align: center;">🔺 ខ្ពស់ជាង ១០% (+10%) [ស្វ័យប្រវត្ត]</div>
+        <div style="width: 21%; text-align: center;">🔻 ទាបជាង ១០% (-10%) [ស្វ័យប្រវត្ត]</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not filtered_catalog:
+      st.warning("⚠️ គ្មានមុខទំនិញដែលត្រូវគ្នានឹងការស្វែងរក ឬក្រុមដែលបានជ្រើសរើសឡើយ។")
+    else:
+      for idx, it in enumerate(filtered_catalog, 1):
+        inm = it["name"]
+        unit = it.get("unit", "1គីឡូ")
+        grp = it.get("group", "")
+        cat = it.get("category", "")
+        cur_base = float(st.session_state["admin_bm_matrix"].get(inm, it.get("base_avg", 0)))
+
+        c_no, c_name, c_inp_base, c_disp_high, c_disp_low = st.columns([0.5, 3.2, 2.1, 2.1, 2.1])
+        with c_no:
+          st.markdown(f"<div style='padding-top: 10px; font-weight: 600; color: #64748b;'>{idx}</div>", unsafe_allow_html=True)
+        with c_name:
+          st.markdown(f"""
+          <div style='padding-top: 4px;'>
+            <span style='font-size: 15px; font-weight: 700; color: #0f172a;'>{inm}</span>
+            <span style='font-size: 13px; color: #475569;'>({unit})</span><br/>
+            <span style='background: #e2e8f0; padding: 2px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; color: #334155;'>{grp}</span>
+            <span style='background: #f1f5f9; border: 1px solid #e2e8f0; padding: 1px 6px; border-radius: 10px; font-size: 11px; color: #64748b; margin-left: 4px;'>{cat}</span>
+          </div>
+          """, unsafe_allow_html=True)
+        with c_inp_base:
+          new_base = st.number_input(
+              f"តម្លៃគោល - {inm}",
+              min_value=0.0,
+              max_value=1000000.0,
+              step=50.0,
+              value=cur_base,
+              key=f"adm_base_in_{inm}",
+              label_visibility="collapsed"
           )
-          st.success(f"🎉 បានធ្វើបច្ចុប្បន្នភាពមុខទំនិញ '{p_name}' [{format_category_badge(p_cat)}] សម្រាប់ {target_label} (តម្លៃមធ្យម: {format_riel(auto_avg)}) រួចរាល់!")
-        else:
-          cursor.execute(
-              """
-              INSERT INTO products (item_name, commune, price_phase1, price_phase2, price_avg,
-                                    phase1_start, phase1_end, phase2_start, phase2_end, category,
-                                    province, district, school_name, price_level, supplier_name)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-              """,
-              (p_name.strip(), target_comm, p_price1, p_price2, auto_avg,
-               str(p1_start), str(p1_end), str(p2_start), str(p2_end), p_cat,
-               target_prov, target_dist, target_sch, target_lvl, target_sup)
+          st.session_state["admin_bm_matrix"][inm] = new_base
+        with c_disp_high:
+          auto_high = round(new_base * 1.10)
+          st.text_input(
+              f"ខ្ពស់ជាង 10% - {inm}",
+              value=f"🔺 {auto_high:,.0f} ៛",
+              disabled=True,
+              key=f"adm_high_disp_{inm}",
+              label_visibility="collapsed"
           )
-          st.success(f"🎉 បានរក្សាទុកមុខទំនិញ '{p_name}' [{format_category_badge(p_cat)}] សម្រាប់ {target_label} (តម្លៃមធ្យម: {format_riel(auto_avg)}) ដោយជោគជ័យ!")
+        with c_disp_low:
+          auto_low = round(new_base * 0.90)
+          st.text_input(
+              f"ទាបជាង 10% - {inm}",
+              value=f"🔻 {auto_low:,.0f} ៛",
+              disabled=True,
+              key=f"adm_low_disp_{inm}",
+              label_visibility="collapsed"
+          )
+
+    # Action buttons for Admin
+    st.divider()
+    btn_c1, btn_c2, btn_c3 = st.columns([2, 1.5, 1.5])
+    with btn_c1:
+      if st.button("💾 រក្សាទុកតម្លៃគោលទំនិញទាំងអស់ (Save All Base Prices)", type="primary", use_container_width=True, key="btn_save_all_benchmarks"):
+        for it in SUPPLIER_PRODUCT_CATALOG:
+          inm = it["name"]
+          unit = it.get("unit", "1គីឡូ")
+          grp = it.get("group", "ស្បៀងគោល")
+          cat = it.get("category", "បន្លែ")
+          base_val = float(st.session_state["admin_bm_matrix"].get(inm, it.get("base_avg", 0)))
+          h_val = round(base_val * 1.10, 2)
+          l_val = round(base_val * 0.90, 2)
+          cursor.execute("""
+            INSERT INTO benchmark_prices (item_name, unit, group_name, category, base_price, high_10, low_10, updated_at, updated_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+            ON CONFLICT(item_name) DO UPDATE SET
+              base_price=excluded.base_price,
+              high_10=excluded.high_10,
+              low_10=excluded.low_10,
+              updated_at=datetime('now'),
+              updated_by=excluded.updated_by
+          """, (inm, unit, grp, cat, base_val, h_val, l_val, user_info.get("username", "admin")))
         conn.commit()
+        st.success(f"🎉 បានរក្សាទុកបញ្ជីតម្លៃគោលទំនិញទាំង {len(SUPPLIER_PRODUCT_CATALOG)} មុខដោយជោគជ័យ! តម្លៃគោលថ្មីនេះនឹងត្រូវយកទៅប្រើប្រាស់ក្នុងគ្រប់ផ្នែកទាំងអស់។")
         st.rerun()
 
-    # ប៊ូតុងមួយឃ្លីកបញ្ចូល ៦១ មុខ
-    st.divider()
-    with st.expander("⚡ បញ្ចូលបញ្ជីមុខទំនិញស្ដង់ដារទាំង ៦១ មុខ (ដូចក្នុងរូបភាព) ដោយចុចតែ ១ ឃ្លីក", expanded=False):
-      active_dest = f"សាលារៀន «{s_val}»" if (is_school_mode and s_val) else (f"ឃុំ «{c_val}»" if c_val else "")
-      st.markdown(f"""
-      មុខងារនេះនឹងជួយបញ្ចូល **មុខទំនិញស្ដង់ដារទាំង ៦១ មុខ** ដូចក្នុងរូបភាពគំរូ ព្រមទាំងតម្លៃវគ្គ១-វគ្គ២ ស្ដង់ដារ និងចាត់ថ្នាក់ប្រភេទស្វ័យប្រវត្ត (**អង្ករ, ប្រេងឆា, អំបិល, ត្រី សាច់ ស៊ុត, បន្លែ**) ចូលទៅកាន់ **{active_dest if active_dest else '(សូមជ្រើសរើសគោលដៅ)'}** ដោយស្វ័យប្រវត្តិ មិនបាច់វាយម្តងមួយៗឡើយ!
-      """)
-      if st.button(f"🚀 បញ្ចូលមុខទំនិញទាំង ៦១ មុខភ្លាមៗ ទៅកាន់ {active_dest if active_dest else 'គោលដៅ'}", key="btn_batch_seed_61", type="secondary"):
-        if is_school_mode and not s_val:
-          st.error("សូមជ្រើសរើសសាលារៀនជាមុនសិន!")
-        elif not is_school_mode and not c_val:
-          st.error("សូមជ្រើសរើសឃុំជាមុនសិន!")
-        else:
-          target_prov = p_val or ""
-          target_dist = d_val or ""
-          target_comm = c_val or ""
-          target_sch = s_val if is_school_mode else ""
-          target_lvl = "school" if is_school_mode else "commune"
+    with btn_c2:
+      if st.button("🔄 យកតម្លៃដើមពី Excel (Reset to Excel Defaults)", use_container_width=True, key="btn_reset_all_benchmarks"):
+        for it in SUPPLIER_PRODUCT_CATALOG:
+          inm = it["name"]
+          def_val = float(it.get("base_avg", 0) or it.get("default_p1", 0))
+          st.session_state["admin_bm_matrix"][inm] = def_val
+        st.success("✅ បានកំណត់តម្លៃគោលទាំងអស់មកតាមឯកសារ Excel ដើមវិញ!")
+        st.rerun()
 
-          add_c = 0
-          upd_c = 0
-          for item in STANDARD_PRODUCT_CATALOG:
-            it_name = item["name"]
-            it_cat = item["category"]
-            it_p1 = item["price_phase1"]
-            it_p2 = item["price_phase2"]
-            it_avg = (it_p1 + it_p2) / 2.0
-
-            chk_sql = "SELECT id FROM products WHERE item_name=? AND price_level=?"
-            chk_p = [it_name, target_lvl]
-            if is_school_mode:
-              chk_sql += " AND school_name=?"
-              chk_p.append(target_sch)
-            else:
-              chk_sql += " AND commune=?"
-              chk_p.append(target_comm)
-            r_ex = cursor.execute(chk_sql, tuple(chk_p)).fetchone()
-
-            if r_ex:
-              cursor.execute(
-                  """
-                  UPDATE products 
-                  SET price_phase1=?, price_phase2=?, price_avg=?,
-                      phase1_start=?, phase1_end=?, phase2_start=?, phase2_end=?,
-                      category=?, province=?, district=?, commune=?, school_name=?, price_level=?
-                  WHERE id=?
-                  """,
-                  (it_p1, it_p2, it_avg, def_p1_s, def_p1_e, def_p2_s, def_p2_e,
-                   it_cat, target_prov, target_dist, target_comm, target_sch, target_lvl, r_ex[0])
-              )
-              upd_c += 1
-            else:
-              cursor.execute(
-                  """
-                  INSERT INTO products (item_name, commune, price_phase1, price_phase2, price_avg,
-                                        phase1_start, phase1_end, phase2_start, phase2_end, category,
-                                        province, district, school_name, price_level)
-                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                  """,
-                  (it_name, target_comm, it_p1, it_p2, it_avg,
-                   def_p1_s, def_p1_e, def_p2_s, def_p2_e, it_cat,
-                   target_prov, target_dist, target_sch, target_lvl)
-              )
-              add_c += 1
-          conn.commit()
-          st.success(f"🎉 ជោគជ័យ! បានបញ្ចូលមុខទំនិញថ្មី {add_c} មុខ និងធ្វើបច្ចុប្បន្នភាព {upd_c} មុខ សម្រាប់ {active_dest}!")
-          st.rerun()
-
-  # ----------------- TAB 2: កែប្រែ / លុបមុខទំនិញ -----------------
-  with prod_tab2:
-    st.subheader("✏️ កែប្រែ ឬ 🗑️ លុបមុខទំនិញ")
-    prod_query = """
-        SELECT id, item_name, commune, price_phase1, price_phase2, price_avg, 
-               phase1_start, phase1_end, phase2_start, phase2_end, category,
-               province, district, school_name, price_level
-        FROM products
-    """
-    params = []
-    if is_school_mode and s_val:
-      prod_query += " WHERE school_name=? AND price_level='school'"
-      params.append(s_val)
-    elif not is_school_mode and c_val:
-      prod_query += " WHERE commune=? AND (school_name IS NULL OR school_name = '' OR price_level='commune')"
-      params.append(c_val)
-    prod_query += " ORDER BY id DESC"
-
-    all_prods = cursor.execute(prod_query, tuple(params)).fetchall()
-    if all_prods:
-      prod_dict = {}
-      for r in all_prods:
-        lvl_str = f"🏫 {r[13]}" if (r[14] == "school" and r[13]) else f"🏛️ ឃុំ {r[2]}"
-        lbl = f"ID {r[0]}: {r[1]} [{format_category_badge(r[10])}] ({lvl_str} | វគ្គ១: {format_riel(r[3])} | វគ្គ២: {format_riel(r[4])})"
-        prod_dict[lbl] = r
-
-      p_sel = st.selectbox(
-          "ជ្រើសរើសមុខទំនិញដើម្បីកែប្រែ ឬលុប",
-          list(prod_dict.keys()),
-          key="sel_prod_edit",
-      )
-      cur_p = prod_dict[p_sel]
-
-      col_en, col_ecat, col_elvl = st.columns([2, 1.2, 1])
-      with col_en:
-        ed_pname = st.text_input("ឈ្មោះមុខទំនិញ", value=cur_p[1], key="ed_pname")
-      with col_ecat:
-        cur_cat = cur_p[10] if len(cur_p) > 10 and cur_p[10] else classify_item_category(cur_p[1])
-        cat_opts = STANDARD_CATEGORIES + ["ផ្សេងៗ"]
-        cat_idx = cat_opts.index(cur_cat) if cur_cat in cat_opts else 0
-        ed_pcat = st.selectbox("🏷️ ប្រភេទសម្គាល់", cat_opts, index=cat_idx, key=f"ed_pcat_{cur_p[0]}")
-      with col_elvl:
-        cur_lvl_is_sch = (cur_p[14] == "school")
-        ed_lvl = st.selectbox("កម្រិតកំណត់តម្លៃ", ["🏛️ តាមឃុំ", "🏫 តាមសាលា"], index=1 if cur_lvl_is_sch else 0, key=f"ed_lvl_{cur_p[0]}")
-
-      col_ecomm, col_esch = st.columns(2)
-      with col_ecomm:
-        ed_pcomm = st.text_input("ឃុំ/សង្កាត់", value=cur_p[2] or "", key=f"ed_pcomm_{cur_p[0]}")
-      with col_esch:
-        ed_psch = st.text_input("សាលារៀន (បើកំណត់តាមសាលា)", value=cur_p[13] or "", key=f"ed_psch_{cur_p[0]}")
-
-      col_eph1, col_eph2 = st.columns(2)
-      with col_eph1:
-        st.markdown("##### 🟢 កែប្រែតម្លៃ និងកាលបរិច្ឆេទ វគ្គ១")
-        ed_pr1 = st.number_input(
-            "តម្លៃវគ្គ ១ (៛)",
-            min_value=0.0,
-            value=float(cur_p[3] or 0),
-            step=100.0,
-            format="%.0f",
-            key=f"ed_pr1_{cur_p[0]}",
-        )
-        c_ed1_s, c_ed1_e = st.columns(2)
-        with c_ed1_s:
-          ed_p1_s = st.date_input(
-              "ថ្ងៃចាប់ផ្ដើម វគ្គ១",
-              value=parse_date_safe(cur_p[6], date(date.today().year, 1, 1)),
-              key=f"ed_p1_s_{cur_p[0]}",
-          )
-        with c_ed1_e:
-          ed_p1_e = st.date_input(
-              "ថ្ងៃបញ្ចប់ វគ្គ១",
-              value=parse_date_safe(cur_p[7], date(date.today().year, 6, 30)),
-              key=f"ed_p1_e_{cur_p[0]}",
-          )
-
-      with col_eph2:
-        st.markdown("##### 🔵 កែប្រែតម្លៃ និងកាលបរិច្ឆេទ វគ្គ២")
-        ed_pr2 = st.number_input(
-            "តម្លៃវគ្គ ២ (៛)",
-            min_value=0.0,
-            value=float(cur_p[4] or 0),
-            step=100.0,
-            format="%.0f",
-            key=f"ed_pr2_{cur_p[0]}",
-        )
-        c_ed2_s, c_ed2_e = st.columns(2)
-        with c_ed2_s:
-          ed_p2_s = st.date_input(
-              "ថ្ងៃចាប់ផ្ដើម វគ្គ២",
-              value=parse_date_safe(cur_p[8], date(date.today().year, 7, 1)),
-              key=f"ed_p2_s_{cur_p[0]}",
-          )
-        with c_ed2_e:
-          ed_p2_e = st.date_input(
-              "ថ្ងៃបញ្ចប់ វគ្គ២",
-              value=parse_date_safe(cur_p[9], date(date.today().year, 12, 31)),
-              key=f"ed_p2_e_{cur_p[0]}",
-          )
-
-      ed_avg = (ed_pr1 + ed_pr2) / 2.0
-      st.metric("📊 តម្លៃមធ្យមថ្មី (គណនាស្វ័យប្រវត្តិ)", format_riel(ed_avg))
-
-      col_pb1, col_pb2 = st.columns(2)
-      with col_pb1:
-        if st.button("💾 រក្សាទុកការកែប្រែទំនិញ", use_container_width=True, type="primary", key=f"btn_save_ed_{cur_p[0]}"):
-          new_lvl = "school" if "សាលា" in ed_lvl else "commune"
-          if not ed_pname.strip():
-            st.error("ឈ្មោះទំនិញមិនអាចទុកឱ្យទទេបានទេ!")
-          elif new_lvl == "commune" and not ed_pcomm.strip():
-            st.error("សូមបំពេញឈ្មោះឃុំ!")
-          elif new_lvl == "school" and not ed_psch.strip():
-            st.error("សូមបំពេញឈ្មោះសាលារៀន!")
-          elif ed_p1_s > ed_p1_e:
-            st.error("កាលបរិច្ឆេទចាប់ផ្ដើមវគ្គ១ មិនអាចធំជាងថ្ងៃបញ្ចប់បានទេ!")
-          elif ed_p2_s > ed_p2_e:
-            st.error("កាលបរិច្ឆេទចាប់ផ្ដើមវគ្គ២ មិនអាចធំជាងថ្ងៃបញ្ចប់បានទេ!")
-          else:
-            cursor.execute(
-                """
-                UPDATE products 
-                SET item_name=?, commune=?, school_name=?, price_level=?,
-                    price_phase1=?, price_phase2=?, price_avg=?,
-                    phase1_start=?, phase1_end=?, phase2_start=?, phase2_end=?, category=? 
-                WHERE id=?
-                """,
-                (
-                    ed_pname.strip(),
-                    ed_pcomm.strip(),
-                    ed_psch.strip() if new_lvl == "school" else "",
-                    new_lvl,
-                    ed_pr1,
-                    ed_pr2,
-                    ed_avg,
-                    str(ed_p1_s),
-                    str(ed_p1_e),
-                    str(ed_p2_s),
-                    str(ed_p2_e),
-                    ed_pcat,
-                    cur_p[0],
-                ),
-            )
-            conn.commit()
-            st.success(f"🎉 បានកែប្រែមុខទំនិញ ID {cur_p[0]} ({ed_pname} [{format_category_badge(ed_pcat)}]) ដោយជោគជ័យ!")
-            st.rerun()
-
-      with col_pb2:
-        if st.button(f"🗑️ លុបមុខទំនិញនេះ (ID: {cur_p[0]})", use_container_width=True, key=f"btn_del_p_{cur_p[0]}"):
-          cursor.execute("DELETE FROM products WHERE id=?", (cur_p[0],))
-          conn.commit()
-          st.success(f"បានលុបមុខទំនិញ ID {cur_p[0]} រួចរាល់!")
-          st.rerun()
-    else:
-      st.info(f"មិនទាន់មានមុខទំនិញសម្រាប់ {target_label if target_label else 'គោលដៅនេះ'} ទេ។")
-
-  # ----------------- TAB 3: កំណត់កាលបរិច្ឆេទវគ្គរួម -----------------
-  with prod_tab3:
-    st.subheader(f"📅 កំណត់កាលបរិច្ឆេទវគ្គរួម {f'សម្រាប់ {target_label}' if target_label else ''}")
-    st.info(
-        "💡 មុខងារនេះជួយឱ្យអ្នកអាចកំណត់កាលបរិច្ឆេទចាប់ផ្ដើម និងបញ្ចប់ នៃវគ្គ១ និងវគ្គ២ ដល់មុខទំនិញទាំងអស់ក្នុងគោលដៅតែម្ដង យ៉ាងងាយស្រួល និងរហ័ស!"
-    )
-    if is_school_mode and not s_val:
-      st.warning("⚠️ សូមជ្រើសរើសសាលារៀនខាងលើជាមុនសិន ដើម្បីអនុវត្តការកំណត់កាលបរិច្ឆេទវគ្គរួម!")
-    elif not is_school_mode and not c_val:
-      st.warning("⚠️ សូមជ្រើសរើសឃុំ/សង្កាត់ខាងលើជាមុនសិន ដើម្បីអនុវត្តការកំណត់កាលបរិច្ឆេទវគ្គរួម!")
-    else:
-      def_b_p1_s, def_b_p1_e, def_b_p2_s, def_b_p2_e = get_commune_phase_dates(c_val, s_val if is_school_mode else None)
-      col_b1, col_b2 = st.columns(2)
-      with col_b1:
-        st.markdown("##### 🟢 កាលបរិច្ឆេទ វគ្គ១ (ឆមាសទី១)")
-        b1_s = st.date_input(
-            "ថ្ងៃចាប់ផ្ដើម វគ្គ១",
-            value=parse_date_safe(def_b_p1_s, date(date.today().year, 1, 1)),
-            key="batch_p1_s",
-        )
-        b1_e = st.date_input(
-            "ថ្ងៃបញ្ចប់ វគ្គ១",
-            value=parse_date_safe(def_b_p1_e, date(date.today().year, 6, 30)),
-            key="batch_p1_e",
-        )
-      with col_b2:
-        st.markdown("##### 🔵 កាលបរិច្ឆេទ វគ្គ២ (ឆមាសទី២)")
-        b2_s = st.date_input(
-            "ថ្ងៃចាប់ផ្ដើម វគ្គ២",
-            value=parse_date_safe(def_b_p2_s, date(date.today().year, 7, 1)),
-            key="batch_p2_s",
-        )
-        b2_e = st.date_input(
-            "ថ្ងៃបញ្ចប់ វគ្គ២",
-            value=parse_date_safe(def_b_p2_e, date(date.today().year, 12, 31)),
-            key="batch_p2_e",
-        )
-
-      if is_school_mode:
-        num_prods = cursor.execute("SELECT COUNT(*) FROM products WHERE school_name=? AND price_level='school'", (s_val,)).fetchone()[0]
-      else:
-        num_prods = cursor.execute("SELECT COUNT(*) FROM products WHERE commune=? AND (school_name IS NULL OR school_name='' OR price_level='commune')", (c_val,)).fetchone()[0]
-
-      st.write(f"📦 ចំនួនមុខទំនិញបច្ចុប្បន្នក្នុង {target_label}: **{num_prods}** មុខ")
-
-      if st.button(
-          f"💾 អនុវត្តកាលបរិច្ឆេទទាំងនេះចំពោះគ្រប់មុខទំនិញក្នុង {target_label}",
-          type="primary",
-          use_container_width=True,
-          key="btn_apply_batch_dates",
-      ):
-        if num_prods == 0:
-          st.warning("មិនទាន់មានមុខទំនិញក្នុងគោលដៅនេះនៅឡើយទេ!")
-        elif b1_s > b1_e:
-          st.error("កាលបរិច្ឆេទចាប់ផ្ដើមវគ្គ១ មិនអាចធំជាងថ្ងៃបញ្ចប់បានទេ!")
-        elif b2_s > b2_e:
-          st.error("កាលបរិច្ឆេទចាប់ផ្ដើមវគ្គ២ មិនអាចធំជាងថ្ងៃបញ្ចប់បានទេ!")
-        else:
-          if is_school_mode:
-            cursor.execute(
-                """
-                UPDATE products 
-                SET phase1_start=?, phase1_end=?, phase2_start=?, phase2_end=? 
-                WHERE school_name=? AND price_level='school'
-                """,
-                (str(b1_s), str(b1_e), str(b2_s), str(b2_e), s_val),
-            )
-          else:
-            cursor.execute(
-                """
-                UPDATE products 
-                SET phase1_start=?, phase1_end=?, phase2_start=?, phase2_end=? 
-                WHERE commune=? AND (school_name IS NULL OR school_name='' OR price_level='commune')
-                """,
-                (str(b1_s), str(b1_e), str(b2_s), str(b2_e), c_val),
-            )
-          conn.commit()
-          st.success(
-              f"🎉 បានធ្វើបច្ចុប្បន្នភាពកាលបរិច្ឆេទ វគ្គ១ ({b1_s} ដល់ {b1_e}) និង វគ្គ២ ({b2_s} ដល់ {b2_e}) ដល់មុខទំនិញទាំង {num_prods} នៃ {target_label} ដោយជោគជ័យ!"
-          )
-          st.rerun()
-
-  # ----------------- TAB 4: នាំចូលមុខទំនិញពីក្រៅ -----------------
-  with prod_tab4:
-    st.subheader("📥 នាំចូលមុខទំនិញពីក្រៅ (Excel, Word, CSV, PDF, រូបភាព)")
-    st.info(
-        "💡 គាំទ្រការនាំចូលមុខទំនិញសម្រាប់ **សាលារៀន** ឬ **ឃុំ/សង្កាត់** ដោយចាត់ថ្នាក់ប្រភេទស្វ័យប្រវត្ត និងគណនាតម្លៃមធ្យមស្វ័យប្រវត្តិ។"
-    )
-
-    cur_y = date.today().year
-    prod_tpl = generate_sample_excel(
-        [
-            "ឈ្មោះមុខទំនិញ",
-            "ប្រភេទសម្គាល់",
-            "កម្រិតកំណត់តម្លៃ (សាលា/ឃុំ)",
-            "សាលារៀន",
-            "ឃុំ/សង្កាត់",
-            "តម្លៃវគ្គ១ (៛)",
-            "ថ្ងៃចាប់ផ្ដើមវគ្គ១",
-            "ថ្ងៃបញ្ចប់វគ្គ១",
-            "តម្លៃវគ្គ២ (៛)",
-            "ថ្ងៃចាប់ផ្ដើមវគ្គ២",
-            "ថ្ងៃបញ្ចប់វគ្គ២",
-        ],
-        [
-            "អង្ករចម្រុះ",
-            "អង្ករ",
-            "តាមឃុំ",
-            "",
-            c_val if c_val else "ស្លែងស្ពាន",
-            2100,
-            f"{cur_y}-01-01",
-            f"{cur_y}-06-30",
-            2100,
-            f"{cur_y}-07-01",
-            f"{cur_y}-12-31",
-        ],
-    )
-    st.download_button(
-        "📥 ទាញយកគំរូឯកសារ Excel (Product Template)",
-        data=prod_tpl,
-        file_name="Template_Products.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-
-    up_prod_file = st.file_uploader(
-        "ជ្រើសរើសឯកសារមុខទំនិញ (xlsx, docx, csv, pdf, png, jpg)",
-        type=["xlsx", "xls", "docx", "doc", "csv", "pdf", "png", "jpg", "jpeg"],
-        key="up_prod_file",
-    )
-
-    if up_prod_file:
-      raw_prod_df = extract_table_from_file(up_prod_file)
-      if not raw_prod_df.empty:
-        st.success(f"✅ អានទិន្នន័យបានជោគជ័យ! ចំនួន {len(raw_prod_df)} ជួរ")
-
-        cols = list(raw_prod_df.columns)
-        map_pn = next(
-            (c for c in cols if any(k in str(c).lower() for k in ["ទំនិញ", "item", "product", "name"])),
-            cols[0] if len(cols) > 0 else "",
-        )
-        map_pcat = next(
-            (c for c in cols if any(k in str(c).lower() for k in ["ប្រភេទ", "សម្គាល់", "category", "cat"])),
-            "",
-        )
-        map_plvl = next(
-            (c for c in cols if any(k in str(c).lower() for k in ["កម្រិត", "level"])),
-            "",
-        )
-        map_psch = next(
-            (c for c in cols if any(k in str(c).lower() for k in ["សាលា", "school"])),
-            "",
-        )
-        map_pc = next(
-            (c for c in cols if any(k in str(c).lower() for k in ["ឃុំ", "comm"])),
-            cols[1] if len(cols) > 1 else "",
-        )
-        map_pp1 = next(
-            (c for c in cols if any(k in str(c).lower() for k in ["វគ្គ១", "phase1", "price1", "តម្លៃ១"])),
-            cols[2] if len(cols) > 2 else "",
-        )
-        map_pp2 = next(
-            (c for c in cols if any(k in str(c).lower() for k in ["វគ្គ២", "phase2", "price2", "តម្លៃ២"])),
-            cols[3] if len(cols) > 3 else "",
-        )
-        map_p1s = next(
-            (c for c in cols if any(k in str(c).lower() for k in ["ចាប់ផ្ដើម១", "p1_start", "start1", "ផ្ដើម១"])),
-            "",
-        )
-        map_p1e = next(
-            (c for c in cols if any(k in str(c).lower() for k in ["បញ្ចប់១", "p1_end", "end1"])),
-            "",
-        )
-        map_p2s = next(
-            (c for c in cols if any(k in str(c).lower() for k in ["ចាប់ផ្ដើម២", "p2_start", "start2", "ផ្ដើម២"])),
-            "",
-        )
-        map_p2e = next(
-            (c for c in cols if any(k in str(c).lower() for k in ["បញ្ចប់២", "p2_end", "end2"])),
-            "",
-        )
-
-        p1_series = pd.to_numeric(raw_prod_df[map_pp1] if map_pp1 in raw_prod_df else 0, errors="coerce").fillna(0)
-        p2_series = pd.to_numeric(raw_prod_df[map_pp2] if map_pp2 in raw_prod_df else 0, errors="coerce").fillna(0)
-        avg_series = ((p1_series + p2_series) / 2.0).round(2)
-
-        comm_default = raw_prod_df[map_pc] if map_pc in raw_prod_df else (c_val if c_val else "")
-        sch_default = raw_prod_df[map_psch] if map_psch in raw_prod_df else (s_val if is_school_mode and s_val else "")
-
-        cat_series = []
-        for idx_r, row_r in raw_prod_df.iterrows():
-          c_val_found = str(row_r[map_pcat]).strip() if (map_pcat and map_pcat in row_r) else ""
-          if not c_val_found or c_val_found.lower() == 'nan':
-            c_val_found = classify_item_category(str(row_r[map_pn])) if map_pn in row_r else "បន្លែ"
-          cat_series.append(c_val_found)
-
-        formatted_prod_df = pd.DataFrame({
-            "ឈ្មោះមុខទំនិញ": raw_prod_df[map_pn] if map_pn in raw_prod_df else "",
-            "ប្រភេទសម្គាល់": cat_series,
-            "សាលារៀន": sch_default,
-            "ឃុំ/សង្កាត់": comm_default,
-            "តម្លៃវគ្គ១ (៛)": p1_series,
-            "ថ្ងៃចាប់ផ្ដើមវគ្គ១": raw_prod_df[map_p1s] if map_p1s and map_p1s in raw_prod_df else def_p1_s,
-            "ថ្ងៃបញ្ចប់វគ្គ១": raw_prod_df[map_p1e] if map_p1e and map_p1e in raw_prod_df else def_p1_e,
-            "តម្លៃវគ្គ២ (៛)": p2_series,
-            "ថ្ងៃចាប់ផ្ដើមវគ្គ២": raw_prod_df[map_p2s] if map_p2s and map_p2s in raw_prod_df else def_p2_s,
-            "ថ្ងៃបញ្ចប់វគ្គ២": raw_prod_df[map_p2e] if map_p2e and map_p2e in raw_prod_df else def_p2_e,
-            "តម្លៃមធ្យម (៛)": avg_series,
+    with btn_c3:
+      export_rows = []
+      for idx, it in enumerate(SUPPLIER_PRODUCT_CATALOG, 1):
+        inm = it["name"]
+        b_val = float(st.session_state["admin_bm_matrix"].get(inm, it.get("base_avg", 0)))
+        export_rows.append({
+            "ល.រ": idx,
+            "ឈ្មោះមុខទំនិញ": inm,
+            "ឯកត្តា": it.get("unit", "1គីឡូ"),
+            "ក្រុមទំនិញ": it.get("group", ""),
+            "ប្រភេទ": it.get("category", ""),
+            "តម្លៃគោល (៛)": b_val,
+            "ខ្ពស់ជាង ១០% (៛)": round(b_val * 1.10),
+            "ទាបជាង ១០% (៛)": round(b_val * 0.90)
         })
+      df_export = pd.DataFrame(export_rows)
+      excel_buf = io.BytesIO()
+      with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
+        df_export.to_excel(writer, index=False, sheet_name="តម្លៃគោល")
+      st.download_button(
+          "📥 ទាញយកជា Excel",
+          data=excel_buf.getvalue(),
+          file_name="បញ្ជីតម្លៃគោលមុខទំនិញ_Admin.xlsx",
+          mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          use_container_width=True,
+          key="btn_export_benchmarks_excel"
+      )
 
-        st.markdown("##### ✏️ ផ្ទៀងផ្ទាត់ កែប្រែ និងគណនាតម្លៃមធ្យមស្វ័យប្រវត្ត:")
-        edited_prod_df = st.data_editor(
-            formatted_prod_df, num_rows="dynamic", use_container_width=True, key="ed_prod_import"
-        )
-
-        edited_prod_df["តម្លៃមធ្យម (៛)"] = (
-            (pd.to_numeric(edited_prod_df["តម្លៃវគ្គ១ (៛)"], errors="coerce").fillna(0) +
-             pd.to_numeric(edited_prod_df["តម្លៃវគ្គ២ (៛)"], errors="coerce").fillna(0)) / 2.0
-        ).round(2)
-
-        if st.button("📥 យល់ព្រមនាំចូលមុខទំនិញទាំងអស់ចូល Database", key="btn_save_prod_import", use_container_width=True, type="primary"):
-          count = 0
-          for _, r in edited_prod_df.iterrows():
-            in_name = str(r.get("ឈ្មោះមុខទំនិញ", "")).strip()
-            in_cat = str(r.get("ប្រភេទសម្គាល់", "")).strip() or classify_item_category(in_name)
-            in_sch = str(r.get("សាលារៀន", "")).strip()
-            in_comm = str(r.get("ឃុំ/សង្កាត់", "")).strip() or c_val
-            in_p1 = float(r.get("តម្លៃវគ្គ១ (៛)", 0) or 0)
-            in_p2 = float(r.get("តម្លៃវគ្គ២ (៛)", 0) or 0)
-            in_avg = float(r.get("តម្លៃមធ្យម (៛)", 0) or ((in_p1 + in_p2) / 2.0))
-            in_p1s = str(r.get("ថ្ងៃចាប់ផ្ដើមវគ្គ១", def_p1_s)).strip()[:10]
-            in_p1e = str(r.get("ថ្ងៃបញ្ចប់វគ្គ១", def_p1_e)).strip()[:10]
-            in_p2s = str(r.get("ថ្ងៃចាប់ផ្ដើមវគ្គ២", def_p2_s)).strip()[:10]
-            in_p2e = str(r.get("ថ្ងៃបញ្ចប់វគ្គ២", def_p2_e)).strip()[:10]
-            in_lvl = "school" if in_sch else "commune"
-
-            if in_name and (in_comm or in_sch):
-              # Check existing
-              ch_sql = "SELECT id FROM products WHERE item_name=? AND price_level=?"
-              ch_p = [in_name, in_lvl]
-              if in_lvl == "school":
-                ch_sql += " AND school_name=?"
-                ch_p.append(in_sch)
-              else:
-                ch_sql += " AND commune=?"
-                ch_p.append(in_comm)
-              r_ex = cursor.execute(ch_sql, tuple(ch_p)).fetchone()
-              if r_ex:
-                cursor.execute(
-                    """
-                    UPDATE products 
-                    SET price_phase1=?, price_phase2=?, price_avg=?,
-                        phase1_start=?, phase1_end=?, phase2_start=?, phase2_end=?,
-                        category=?, commune=?, school_name=?, price_level=?
-                    WHERE id=?
-                    """,
-                    (in_p1, in_p2, in_avg, in_p1s, in_p1e, in_p2s, in_p2e, in_cat, in_comm, in_sch, in_lvl, r_ex[0])
-                )
-              else:
-                cursor.execute(
-                    """
-                    INSERT INTO products (item_name, commune, school_name, price_level,
-                                          price_phase1, price_phase2, price_avg,
-                                          phase1_start, phase1_end, phase2_start, phase2_end, category)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (in_name, in_comm, in_sch, in_lvl, in_p1, in_p2, in_avg, in_p1s, in_p1e, in_p2s, in_p2e, in_cat),
-                )
-              count += 1
-          conn.commit()
-          st.success(f"🎉 បាននាំចូលមុខទំនិញចំនួន {count} ដោយជោគជ័យ!")
-          st.rerun()
-      else:
-        st.warning("មិនអាចទាញយកទិន្នន័យតារាងពីឯកសារនេះបានទេ!")
-
-  # ----------------- បញ្ជីមុខទំនិញទាំងអស់ក្នុងប្រព័ន្ធ -----------------
-  st.divider()
-  st.subheader(
-      f"📋 បញ្ជីមុខទំនិញ និងកាលបរិច្ឆេទវគ្គ"
-      + (f" សម្រាប់ {target_label}" if target_label else " ទាំងអស់ក្នុងប្រព័ន្ធ")
-  )
-  prod_sql = """
-      SELECT item_name as [មុខទំនិញ], 
-             category as [ប្រភេទសម្គាល់],
-             CASE WHEN price_level='school' THEN '🏫 តាមសាលា' ELSE '🏛️ តាមឃុំ' END as [កម្រិត],
-             COALESCE(school_name, '-') as [សាលារៀន],
-             commune as [ឃុំ/សង្កាត់], 
-             price_phase1 as [តម្លៃវគ្គ១ (៛)], 
-             COALESCE(phase1_start || ' ដល់ ' || phase1_end, '-') as [កាលបរិច្ឆេទវគ្គ១],
-             price_phase2 as [តម្លៃវគ្គ២ (៛)],
-             COALESCE(phase2_start || ' ដល់ ' || phase2_end, '-') as [កាលបរិច្ឆេទវគ្គ២],
-             price_avg as [តម្លៃមធ្យម (៛)],
-             phase1_start, phase1_end, phase2_start, phase2_end
-      FROM products 
-  """
-  if is_school_mode and s_val:
-    prod_sql += " WHERE school_name=? AND price_level='school' ORDER BY id DESC"
-    df_prod = pd.read_sql_query(prod_sql, conn, params=(s_val,))
-  elif not is_school_mode and c_val:
-    prod_sql += " WHERE commune=? AND (school_name IS NULL OR school_name='' OR price_level='commune') ORDER BY id DESC"
-    df_prod = pd.read_sql_query(prod_sql, conn, params=(c_val,))
-  else:
-    prod_sql += " ORDER BY price_level, commune, school_name, id DESC"
-    df_prod = pd.read_sql_query(prod_sql, conn)
-
-  if not df_prod.empty:
-    today_str = str(date.today())
-    def calc_active_status(row):
-      p1_s, p1_e = str(row.get("phase1_start") or ""), str(row.get("phase1_end") or "")
-      p2_s, p2_e = str(row.get("phase2_start") or ""), str(row.get("phase2_end") or "")
-      if p1_s and p1_e and (p1_s <= today_str <= p1_e):
-        return "🟢 កំពុងអនុវត្ត វគ្គ១"
-      elif p2_s and p2_e and (p2_s <= today_str <= p2_e):
-        return "🔵 កំពុងអនុវត្ត វគ្គ២"
-      elif p1_s and today_str >= p1_s and (not p1_e or today_str <= p1_e):
-        return "🟢 វគ្គ១"
-      elif p2_s and today_str >= p2_s and (not p2_e or today_str <= p2_e):
-        return "🔵 វគ្គ២"
-      return "⚪ ក្រៅកាលបរិច្ឆេទ"
-
-    df_prod["ប្រភេទសម្គាល់"] = df_prod["ប្រភេទសម្គាល់"].apply(lambda c: format_category_badge(c) if c else "⚪ មិនទាន់កំណត់")
-    df_prod["វគ្គបច្ចុប្បន្ន (ស្វ័យប្រវត្ត)"] = df_prod.apply(calc_active_status, axis=1)
-    disp_cols = [
-        "មុខទំនិញ", "ប្រភេទសម្គាល់", "កម្រិត", "សាលារៀន", "ឃុំ/សង្កាត់",
-        "តម្លៃវគ្គ១ (៛)", "កាលបរិច្ឆេទវគ្គ១",
-        "តម្លៃវគ្គ២ (៛)", "កាលបរិច្ឆេទវគ្គ២",
-        "តម្លៃមធ្យម (៛)", "វគ្គបច្ចុប្បន្ន (ស្វ័យប្រវត្ត)"
-    ]
-    df_prod_display = df_prod[[c for c in disp_cols if c in df_prod.columns]]
-    st.dataframe(
-        add_row_numbers(df_prod_display), use_container_width=True, hide_index=True
-    )
-  else:
-    st.info("មិនទាន់មានមុខទំនិញនៅឡើយទេ។")
 
 # ================= ៤. កត់ត្រា និងចេញវិក្កយបត្រប្រចាំថ្ងៃ (ឧបសម្ពន្ធ ៣) =================
 elif menu == "📝 កត់ត្រា និងចេញវិក្កយបត្រប្រចាំថ្ងៃ":
