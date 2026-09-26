@@ -581,6 +581,44 @@ def get_all_suppliers():
   return [SupplierRow(r) for r in cursor.fetchall()]
 
 
+def get_suppliers_for_school_and_commune(school_name, commune_name):
+  """
+  ទាញយកបញ្ជីអ្នកផ្គត់ផ្គង់ដែលមានក្នុងសាលា ឬក្នុងឃុំនេះ (សម្រាប់ Dropdown List ជ្រើសរើសអ្នកផ្គត់ផ្គង់)
+  """
+  sups = []
+  seen_names = set()
+  clean_c = (commune_name or "").replace("ឃុំ", "").strip()
+
+  query = """
+    SELECT id, school_name, supplier_name, village, commune, district, province,
+           phone, signature_data, supplied_categories, supply_level,
+           target_commune, target_district, target_province
+    FROM suppliers
+    WHERE (school_name = ? AND school_name != '')
+       OR (target_commune = ? AND target_commune != '')
+       OR (target_commune = ? AND target_commune != '')
+       OR (commune = ? AND commune != '')
+       OR (commune = ? AND commune != '')
+    ORDER BY id ASC
+  """
+  rows = cursor.execute(query, (school_name or "", commune_name or "", clean_c, commune_name or "", clean_c)).fetchall()
+  for r in rows:
+    s = SupplierRow(r)
+    if s["supplier_name"] and s["supplier_name"] not in seen_names:
+      sups.append(s)
+      seen_names.add(s["supplier_name"])
+
+  # ប្រសិនបើគ្មានអ្នកផ្គត់ផ្គង់ណាត្រូវគ្នានឹងសាលា/ឃុំនេះទេ ទាញយកអ្នកផ្គត់ផ្គង់ទាំងអស់ក្នុង DB
+  if not sups:
+    all_s = get_all_suppliers()
+    for s in all_s:
+      if s["supplier_name"] and s["supplier_name"] not in seen_names:
+        sups.append(s)
+        seen_names.add(s["supplier_name"])
+
+  return sups
+
+
 def save_or_update_supplier(
     school_name,
     supplier_name,
@@ -765,6 +803,86 @@ def get_supplier_prices_map(supplier_name):
   except Exception:
     pass
   return res
+
+
+get_supplier_prices = get_supplier_prices_map
+
+
+def filter_and_price_monthly_items(items, supplier_name, supplier_obj=None, claim_month=8):
+  """
+  គណនា និងចម្រាញ់យកតែមុខទំនិញណាដែលឈ្មោះអ្នកផ្គត់ផ្គង់នោះបានជ្រើសរើស និងកំណត់តម្លៃនៅតារាងគ្រប់គ្រងអ្នកផ្គត់ផ្គង់
+  បើជ្រើសរើស 'ទាំងអស់' គណនាទំនិញទាំងអស់ក្នុងខែ។
+  """
+  if not items:
+    return []
+  if not supplier_name or str(supplier_name).startswith("-- ទាំងអស់"):
+    return items
+
+  # ១. ប្រភេទមុខទំនិញដែលអ្នកផ្គត់ផ្គង់ទទួលខុសត្រូវផ្គត់ផ្គង់
+  sup_cats_raw = ""
+  if supplier_obj and isinstance(supplier_obj, dict):
+    sup_cats_raw = supplier_obj.get("supplied_categories", "") or ""
+  if not sup_cats_raw:
+    row_sc = cursor.execute("SELECT supplied_categories FROM suppliers WHERE supplier_name=? LIMIT 1", (supplier_name,)).fetchone()
+    sup_cats_raw = row_sc[0] if row_sc and row_sc[0] else ""
+
+  sup_cats = [c.strip() for c in sup_cats_raw.split(",") if c.strip()]
+
+  # ២. តម្លៃទំនិញដែលបានកំណត់នៅតារាងគ្រប់គ្រងអ្នកផ្គត់ផ្គង់
+  sup_prices = get_supplier_prices_map(supplier_name)
+
+  filtered = []
+  for it in items:
+    it_name = str(it.get("name", "")).strip()
+    it_cat = str(it.get("category", "")).strip() or classify_item_category(it_name)
+
+    # ពិនិត្យលក្ខខណ្ឌមុខទំនិញ៖
+    is_matched = False
+    if sup_cats:
+      for sc in sup_cats:
+        if sc == it_cat or sc in it_cat or it_cat in sc:
+          is_matched = True
+          break
+        if any(w in it_cat for w in sc.split()):
+          is_matched = True
+          break
+    else:
+      is_matched = True
+
+    if not is_matched:
+      continue
+
+    qty = float(it.get("qty", 0) or 0)
+    orig_u_price = float(it.get("unit_price", 0) or 0)
+    final_u_price = orig_u_price
+
+    # ស្វែងរកតម្លៃឯកតាដែលបានកំណត់នៅតារាងគ្រប់គ្រងអ្នកផ្គត់ផ្គង់
+    sp = sup_prices.get(it_name)
+    if not sp:
+      for k_p, v_p in sup_prices.items():
+        if k_p in it_name or it_name in k_p:
+          sp = v_p
+          break
+
+    if sp:
+      if claim_month <= 6:
+        target_p = sp.get("p1", 0) or sp.get("avg", 0)
+      else:
+        target_p = sp.get("p2", 0) or sp.get("avg", 0)
+
+      if target_p > 0:
+        final_u_price = target_p
+      elif sp.get("avg", 0) > 0:
+        final_u_price = sp.get("avg", 0)
+
+    final_total = round(qty * final_u_price, 2)
+    it_copy = dict(it)
+    it_copy["category"] = it_cat
+    it_copy["unit_price"] = final_u_price
+    it_copy["total_price"] = final_total
+    filtered.append(it_copy)
+
+  return filtered
 
 
 def save_all_supplier_prices(supplier_name, price_dict, supply_level="school", target_school="", target_commune="", target_district="", target_province=""):
@@ -2913,7 +3031,12 @@ def generate_monthly_claim_html(district, commune, school_name, voucher_no, d_st
   rounded_amount = round_khmer_currency(total_amount)
   tot_amt_str = f"{int(total_amount):,} ៛" if total_amount % 1 == 0 else f"{total_amount:,.2f} ៛"
   rounded_amt_str = f"{int(rounded_amount):,} ៛"
-  v_display = f"{voucher_no}" if voucher_no else "0008"
+  if voucher_no and str(voucher_no).strip():
+    v_display = str(voucher_no).strip()
+  elif d_end:
+    v_display = f"{d_end.month:04d}"
+  else:
+    v_display = "0008"
 
   def chk(cat_name):
     cat_words = set(cat_name.split())
@@ -2934,6 +3057,12 @@ def generate_monthly_claim_html(district, commune, school_name, voucher_no, d_st
   @page {{
     size: A4 portrait;
     margin: 10mm 14mm 8mm 14mm;
+  }}
+
+  @media print {{
+    .no-print {{
+      display: none !important;
+    }}
   }}
   
   * {{
@@ -3197,6 +3326,12 @@ def generate_monthly_claim_html(district, commune, school_name, voucher_no, d_st
 </style>
 </head>
 <body>
+
+<div class="no-print" style="display: flex; justify-content: flex-end; margin-bottom: 6px; padding: 2px 0;">
+  <button onclick="window.print()" style="background: #0284c7; color: #fff; border: 1px solid #0284c7; padding: 6px 16px; border-radius: 4px; font-family: inherit; font-size: 12px; font-weight: bold; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);">
+    🖨️ បោះពុម្ពសំណើទូទាត់ A4 (Print)
+  </button>
+</div>
 
 <div class="top-center">
   <div class="muol country-title">ព្រះរាជាណាចក្រកម្ពុជា</div>
@@ -5719,29 +5854,61 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
     def_e_date = date(2026, 8, 31) if today.year == 2026 else date(today.year, today.month, 1)
     claim_end_date = st.date_input("ដល់ថ្ងៃទី (End Date)", value=def_e_date, key="claim_d_end")
   with col_vno:
-    vno_def = st.session_state.get("claim_vno_preset", "0008")
-    claim_voucher_no = st.text_input("លេខសក្ខីប័ត្រសំណើ (Voucher No)", value=vno_def, key=f"claim_vno_{claim_school}")
+    claim_month = claim_end_date.month if claim_end_date else today.month
+    auto_vno = f"{claim_month:04d}"
+    vno_def = st.session_state.get("claim_vno_preset", auto_vno)
+    claim_voucher_no = st.text_input("លេខសក្ខីប័ត្រសំណើ (ទម្រង់ 000n នៃខែ)", value=vno_def, key=f"claim_vno_{claim_school}_{claim_month}")
 
-  # ៣. ព័ត៌មានអ្នកផ្គត់ផ្គង់ (ឈ្មោះ, អាសយដ្ឋាន, លេខទូរស័ព្ទ)
-  claim_sup_info = get_supplier_for_school(claim_school)
-  if claim_sup_info:
-    claim_def_name = claim_sup_info.get("supplier_name", "សាត ក្រូត")
-    claim_def_addr = format_supplier_address(claim_sup_info) or "ភូមិខ្មែរ ឃុំរោង"
-    claim_def_phone = claim_sup_info.get("phone", "090 854 133")
-    saved_claim_sig = claim_sup_info.get("signature_data")
+  # ៣. ព័ត៌មានអ្នកផ្គត់ផ្គង់ (Dropdown List ជ្រើសរើសករណីមានចាប់ពី ២ នាក់ឡើងទៅ)
+  available_sups = get_suppliers_for_school_and_commune(claim_school, act_commune)
+  sup_name_list = list(dict.fromkeys([s["supplier_name"] for s in available_sups if s.get("supplier_name")]))
+  sup_dropdown_options = ["-- ទាំងអស់ (រួមគ្រប់អ្នកផ្គត់ផ្គង់) --"] + sup_name_list
+
+  col_sup_sel, col_sup_note = st.columns([1.6, 1.4])
+  with col_sup_sel:
+    chosen_sup_sel = st.selectbox(
+        "🚚 ជ្រើសរើសអ្នកផ្គត់ផ្គង់ (ករណីមានចាប់ពី ២នាក់ឡើងទៅ ឬជ្រើសរើសទាំងអស់)៖",
+        sup_dropdown_options,
+        key=f"claim_sup_dropdown_{claim_school}_{act_commune}"
+    )
+  with col_sup_note:
+    if len(sup_name_list) >= 2:
+      st.info(f"🚚 ក្នុងទីតាំងនេះមានអ្នកផ្គត់ផ្គង់ចំនួន **{len(sup_name_list)} នាក់**។ អាចជ្រើសរើសម្នាក់ៗ ឬជ្រើស «ទាំងអស់»។")
+    elif len(sup_name_list) == 1:
+      st.caption(f"ℹ️ មានអ្នកផ្គត់ផ្គង់ចំនួន ១ នាក់ ({sup_name_list[0]}) សម្រាប់ទីតាំងនេះ។")
+    else:
+      st.caption("ℹ️ មិនទាន់មានអ្នកផ្គត់ផ្គង់កំណត់ក្នុងសាលានេះទេ។")
+
+  if chosen_sup_sel == "-- ទាំងអស់ (រួមគ្រប់អ្នកផ្គត់ផ្គង់) --":
+    active_sup_obj = None
+    claim_def_name = "រួមគ្រប់អ្នកផ្គត់ផ្គង់" if len(sup_name_list) > 1 else (sup_name_list[0] if sup_name_list else "សាត ក្រូត")
+    first_sup = available_sups[0] if available_sups else None
+    claim_def_addr = format_supplier_address(first_sup) if first_sup else f"ឃុំ{act_commune} ស្រុក{act_district}"
+    claim_def_phone = first_sup.get("phone", "090 854 133") if first_sup else "090 854 133"
+    saved_claim_sig = first_sup.get("signature_data") if first_sup else None
   else:
-    claim_def_name = "សាត ក្រូត"
-    claim_def_addr = "ភូមិខ្មែរ ឃុំរោង"
-    claim_def_phone = "090 854 133"
-    saved_claim_sig = None
+    active_sup_obj = next((s for s in available_sups if s["supplier_name"] == chosen_sup_sel), None)
+    if not active_sup_obj:
+      r_find = cursor.execute("""
+        SELECT id, school_name, supplier_name, village, commune, district, province,
+               phone, signature_data, supplied_categories, supply_level,
+               target_commune, target_district, target_province
+        FROM suppliers WHERE supplier_name=? LIMIT 1
+      """, (chosen_sup_sel,)).fetchone()
+      active_sup_obj = SupplierRow(r_find) if r_find else None
+
+    claim_def_name = active_sup_obj["supplier_name"] if active_sup_obj else chosen_sup_sel
+    claim_def_addr = format_supplier_address(active_sup_obj) if active_sup_obj else "ភូមិខ្មែរ ឃុំរោង"
+    claim_def_phone = active_sup_obj.get("phone", "") if active_sup_obj else ""
+    saved_claim_sig = active_sup_obj.get("signature_data") if active_sup_obj else None
 
   col_sup1, col_sup2, col_sup3 = st.columns([1, 1.2, 1])
   with col_sup1:
-    supplier_name = st.text_input("ឈ្មោះអ្នកផ្គត់ផ្គង់", value=claim_def_name, key=f"claim_sup_name_{claim_school}")
+    supplier_name = st.text_input("ឈ្មោះអ្នកផ្គត់ផ្គង់", value=claim_def_name, key=f"claim_sup_name_{claim_school}_{chosen_sup_sel}")
   with col_sup2:
-    supplier_address = st.text_input("អាសយដ្ឋាន", value=claim_def_addr, key=f"claim_sup_addr_{claim_school}")
+    supplier_address = st.text_input("អាសយដ្ឋាន", value=claim_def_addr, key=f"claim_sup_addr_{claim_school}_{chosen_sup_sel}")
   with col_sup3:
-    supplier_phone = st.text_input("លេខទូរស័ព្ទ", value=claim_def_phone, key=f"claim_sup_phone_{claim_school}")
+    supplier_phone = st.text_input("លេខទូរស័ព្ទ", value=claim_def_phone, key=f"claim_sup_phone_{claim_school}_{chosen_sup_sel}")
 
   # មុខងារគ្រប់គ្រង និងបញ្ចូលហត្ថលេខាលើសំណើសុំទូទាត់ប្រចាំខែ (A4 Monthly Claim Signatures)
   with st.expander("✍️ មុខងារបញ្ចូល និងគ្រប់គ្រងហត្ថលេខាលើសំណើទូទាត់ (Signatures)", expanded=False):
@@ -5752,7 +5919,7 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
     with cs_col1:
       active_claim_sup_sig = render_signature_uploader_with_tools(
           label="១. ហត្ថលេខាអ្នកផ្គត់ផ្គង់ (អ្នកស្នើសុំ)",
-          key_prefix=f"claim_sup_{claim_school}_{claim_start_date}",
+          key_prefix=f"claim_sup_{claim_school}_{claim_start_date}_{chosen_sup_sel}",
           allow_use_saved=True,
           saved_sig_b64=saved_claim_sig,
           allow_blank_choice=True,
@@ -5780,17 +5947,30 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
           default_recolor="blue"
       )
 
-  # ៤. ទាញយក និងគ្រប់គ្រងទិន្នន័យមុខទំនិញជាមុន ដើម្បីចាប់យកប្រភេទមុខទំនិញស្វ័យប្រវត្តិ
-  session_key = f"claim_items_data_{claim_school}_{claim_start_date}_{claim_end_date}"
+  # ៤. ទាញយក និងគ្រប់គ្រងទិន្នន័យមុខទំនិញ
+  base_items_key = f"claim_base_raw_{claim_school}_{claim_start_date}_{claim_end_date}"
+  session_key = f"claim_items_data_{claim_school}_{claim_start_date}_{claim_end_date}_{chosen_sup_sel}"
+
   if "claim_imported_items_preset" in st.session_state and st.session_state["claim_imported_items_preset"]:
-    st.session_state[session_key] = st.session_state.pop("claim_imported_items_preset")
-  elif session_key not in st.session_state:
-    db_items = get_monthly_claim_items(claim_school, claim_start_date, claim_end_date)
-    st.session_state[session_key] = db_items
+    raw_base = st.session_state.pop("claim_imported_items_preset")
+    st.session_state[base_items_key] = raw_base
+    st.session_state[session_key] = filter_and_price_monthly_items(
+        raw_base, chosen_sup_sel, active_sup_obj, claim_month
+    )
+  elif base_items_key in st.session_state:
+    raw_base = list(st.session_state[base_items_key])
+  else:
+    raw_base = get_monthly_claim_items(claim_school, claim_start_date, claim_end_date)
+    st.session_state[base_items_key] = raw_base
+
+  if session_key not in st.session_state:
+    st.session_state[session_key] = filter_and_price_monthly_items(
+        raw_base, chosen_sup_sel, active_sup_obj, claim_month
+    )
 
   current_items = list(st.session_state[session_key])
 
-  # ស្វែងរកប្រភេទសម្គាល់ស្វ័យប្រវត្តិពីទិន្នន័យមុខទំនិញក្នុងសំណើ និងអ្នកផ្គត់ផ្គង់
+  # ស្វែងរកប្រភេទសម្គាល់ស្វ័យប្រវត្តិពីទិន្នន័យមុខទំនិញក្នុងសំណើ
   detected_cats = set()
   for it in current_items:
     it_n = it.get("name", "")
@@ -5799,35 +5979,47 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
     if c_name:
       detected_cats.add(c_name)
 
-  # បើទំនិញទទេ យកតាមអ្នកផ្គត់ផ្គង់ដែលបានកំណត់ក្នុង School Supplier
-  sup_cats_raw = [c.strip() for c in (claim_sup_info.get("supplied_categories") or "").split(",") if c.strip()]
-  if not detected_cats and sup_cats_raw:
-    detected_cats = set(sup_cats_raw)
-
-  # ៥. ប្រភេទចំណាយដែលត្រូវគូសធីក (🗹) លើក្បាលតារាង (ចាប់យកដោយស្វ័យប្រវត្ត)
+  # ៥. ប្រភេទចំណាយដែលត្រូវគូសធីក (🗹) លើក្បាលតារាង (ចាប់យក និងធីកស្វ័យប្រវត្តិតាមអ្នកផ្គត់ផ្គង់)
   st.markdown("##### 🏷️ ប្រភេទមុខទំនិញដែលត្រូវគូសធីក (🗹 ក្នុងក្បាលតារាងសំណើទូទាត់):")
-  if detected_cats:
-    st.caption(f"🤖 **ប្រព័ន្ធចាប់យកស្វ័យប្រវត្តិតាមមុខទំនិញ:** {' • '.join([format_category_badge(c) for c in detected_cats])}")
+  
+  if chosen_sup_sel != "-- ទាំងអស់ (រួមគ្រប់អ្នកផ្គត់ផ្គង់) --":
+    sup_cats_raw = (active_sup_obj.get("supplied_categories") or "") if active_sup_obj else ""
+    sup_cats = [c.strip() for c in sup_cats_raw.split(",") if c.strip()]
+    if sup_cats:
+      auto_rice = any("អង្ករ" in sc for sc in sup_cats) and (("អង្ករ" in detected_cats) if detected_cats else True)
+      auto_salt = any("អំបិល" in sc for sc in sup_cats) and (("អំបិល" in detected_cats) if detected_cats else True)
+      auto_oil = any("ប្រេងឆា" in sc for sc in sup_cats) and (("ប្រេងឆា" in detected_cats) if detected_cats else True)
+      auto_meat = any(k in sc for sc in sup_cats for k in ["សាច់", "ត្រី", "ស៊ុត"]) and (any(k in c for c in detected_cats for k in ["សាច់", "ត្រី", "ស៊ុត"]) if detected_cats else True)
+      auto_veg = any("បន្លែ" in sc for sc in sup_cats) and (("បន្លែ" in detected_cats) if detected_cats else True)
+      st.caption(f"🤖 **កំណត់ធីកតាមមុខទំនិញរបស់អ្នកផ្គត់ផ្គង់ «{chosen_sup_sel}»:** {' • '.join([format_category_badge(c) for c in sup_cats])}")
+    else:
+      auto_rice = ("អង្ករ" in detected_cats) if detected_cats else True
+      auto_salt = ("អំបិល" in detected_cats) if detected_cats else True
+      auto_oil = ("ប្រេងឆា" in detected_cats) if detected_cats else True
+      auto_meat = any(k in c for c in detected_cats for k in ["សាច់", "ត្រី", "ស៊ុត"]) if detected_cats else True
+      auto_veg = ("បន្លែ" in detected_cats) if detected_cats else True
+      if detected_cats:
+        st.caption(f"🤖 **ប្រព័ន្ធចាប់យកស្វ័យប្រវត្តិតាមមុខទំនិញ:** {' • '.join([format_category_badge(c) for c in detected_cats])}")
   else:
-    st.caption("ℹ️ ធីកជ្រើសរើសប្រភេទមុខទំនិញដែលបានផ្គត់ផ្គង់ក្នុងខែនេះ")
-
-  auto_rice = ("អង្ករ" in detected_cats) if detected_cats else True
-  auto_salt = ("អំបិល" in detected_cats) if detected_cats else True
-  auto_oil = ("ប្រេងឆា" in detected_cats) if detected_cats else True
-  auto_meat = any(k in c for c in detected_cats for k in ["សាច់", "ត្រី", "ស៊ុត"]) if detected_cats else True
-  auto_veg = ("បន្លែ" in detected_cats) if detected_cats else True
+    auto_rice = ("អង្ករ" in detected_cats) if detected_cats else True
+    auto_salt = ("អំបិល" in detected_cats) if detected_cats else True
+    auto_oil = ("ប្រេងឆា" in detected_cats) if detected_cats else True
+    auto_meat = any(k in c for c in detected_cats for k in ["សាច់", "ត្រី", "ស៊ុត"]) if detected_cats else True
+    auto_veg = ("បន្លែ" in detected_cats) if detected_cats else True
+    if detected_cats:
+      st.caption(f"🤖 **ប្រព័ន្ធចាប់យកស្វ័យប្រវត្តិតាមមុខទំនិញ (រួមគ្រប់អ្នកផ្គត់ផ្គង់):** {' • '.join([format_category_badge(c) for c in detected_cats])}")
 
   chk_c1, chk_c2, chk_c3, chk_c4, chk_c5 = st.columns(5)
   with chk_c1:
-    chk_rice = st.checkbox("អង្ករ", value=auto_rice, key=f"chk_cat_rice_{claim_school}_{len(current_items)}")
+    chk_rice = st.checkbox("អង្ករ", value=auto_rice, key=f"chk_cat_rice_{claim_school}_{chosen_sup_sel}_{len(current_items)}")
   with chk_c2:
-    chk_salt = st.checkbox("អំបិល", value=auto_salt, key=f"chk_cat_salt_{claim_school}_{len(current_items)}")
+    chk_salt = st.checkbox("អំបិល", value=auto_salt, key=f"chk_cat_salt_{claim_school}_{chosen_sup_sel}_{len(current_items)}")
   with chk_c3:
-    chk_oil = st.checkbox("ប្រេងឆា", value=auto_oil, key=f"chk_cat_oil_{claim_school}_{len(current_items)}")
+    chk_oil = st.checkbox("ប្រេងឆា", value=auto_oil, key=f"chk_cat_oil_{claim_school}_{chosen_sup_sel}_{len(current_items)}")
   with chk_c4:
-    chk_meat = st.checkbox("សាច់ ត្រី ស៊ុត", value=auto_meat, key=f"chk_cat_meat_{claim_school}_{len(current_items)}")
+    chk_meat = st.checkbox("សាច់ ត្រី ស៊ុត", value=auto_meat, key=f"chk_cat_meat_{claim_school}_{chosen_sup_sel}_{len(current_items)}")
   with chk_c5:
-    chk_veg = st.checkbox("បន្លែ", value=auto_veg, key=f"chk_cat_veg_{claim_school}_{len(current_items)}")
+    chk_veg = st.checkbox("បន្លែ", value=auto_veg, key=f"chk_cat_veg_{claim_school}_{chosen_sup_sel}_{len(current_items)}")
 
   checked_categories = []
   if chk_rice: checked_categories.append("អង្ករ")
@@ -5840,7 +6032,7 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
   col_act1, col_act2 = st.columns(2)
   with col_act1:
     if st.button("🌟 ផ្ទុកទិន្នន័យគំរូ (១៨ មុខទំនិញដូចឯកសារស្កេន 001 - 016)", key="btn_load_sample_claim", use_container_width=True):
-      st.session_state[session_key] = [
+      sample_18 = [
           {"name": "ប្រេងឆា", "category": "ប្រេងឆា", "voucher_ref": "001 - 016", "qty": 23.7, "unit_price": 6499.0, "total_price": 154026.0},
           {"name": "អំបិលអ៊ីយ៉ូត", "category": "អំបិល", "voucher_ref": "001 - 016", "qty": 5.0, "unit_price": 1000.0, "total_price": 5000.0},
           {"name": "សាច់ជ្រូក៣ជាន់", "category": "ត្រី សាច់ ស៊ុត", "voucher_ref": "001 - 016", "qty": 19.0, "unit_price": 15950.0, "total_price": 303050.0},
@@ -5860,11 +6052,19 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
           {"name": "ការ៉ុត", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 11.5, "unit_price": 2999.0, "total_price": 34489.0},
           {"name": "ផ្កាខាត់ណា", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 55.5, "unit_price": 4890.0, "total_price": 271395.0},
       ]
+      st.session_state[base_items_key] = sample_18
+      st.session_state[session_key] = filter_and_price_monthly_items(
+          sample_18, chosen_sup_sel, active_sup_obj, claim_month
+      )
       st.rerun()
 
   with col_act2:
     if st.button("🔄 ទាញយកទិន្នន័យពី Database ឡើងវិញ (Refresh from DB)", key="btn_refresh_claim", use_container_width=True):
-      st.session_state[session_key] = get_monthly_claim_items(claim_school, claim_start_date, claim_end_date)
+      raw_db = get_monthly_claim_items(claim_school, claim_start_date, claim_end_date)
+      st.session_state[base_items_key] = raw_db
+      st.session_state[session_key] = filter_and_price_monthly_items(
+          raw_db, chosen_sup_sel, active_sup_obj, claim_month
+      )
       st.rerun()
 
   # ៦. ប្រអប់បន្ថែម ឬកែប្រែទំនិញ និងលេខយោងក្នុងតារាង
@@ -5973,7 +6173,11 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
       preparer_sig=active_claim_prep_sig
   )
 
-  col_btn1, col_btn2, col_btn3 = st.columns(3)
+  col_btn_print, col_btn1, col_btn2, col_btn3 = st.columns([1.3, 1.1, 1.1, 0.9])
+  with col_btn_print:
+    if st.button("🖨️ បោះពុម្ពសំណើទូទាត់ (Print A4)", type="primary", use_container_width=True, key="btn_direct_print_claim"):
+      st.session_state["trigger_claim_print"] = True
+
   with col_btn1:
     claim_pdf_bytes = generate_monthly_claim_pdf(
         district=act_district,
@@ -6028,6 +6232,24 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
         file_name=f"សំណើទូទាត់ប្រចាំខែ_{claim_school}_{claim_voucher_no}.html",
         mime="text/html",
         use_container_width=True
+    )
+
+  if st.session_state.pop("trigger_claim_print", False):
+    import json
+    st.components.v1.html(
+        f"""
+        <script>
+          var printWin = window.open('', '_blank');
+          printWin.document.open();
+          printWin.document.write({json.dumps(claim_html_code)});
+          printWin.document.close();
+          printWin.focus();
+          setTimeout(function() {{
+            printWin.print();
+          }}, 500);
+        </script>
+        """,
+        height=0
     )
 
   # ៩. Live Preview
