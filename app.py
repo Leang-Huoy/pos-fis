@@ -468,17 +468,11 @@ def init_db():
         updated_at TEXT,
         updated_by TEXT
     )""")
-  cursor.execute("SELECT COUNT(*) FROM benchmark_prices")
-  if cursor.fetchone()[0] == 0:
-    for it in SUPPLIER_PRODUCT_CATALOG:
-      b_p = float(it.get("base_avg", 0) or it.get("default_p1", 0))
-      h_10 = round(b_p * 1.10, 2)
-      l_10 = round(b_p * 0.90, 2)
-      cursor.execute("""
-        INSERT INTO benchmark_prices (item_name, unit, group_name, category, base_price, high_10, low_10, updated_at, updated_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), 'system')
-        ON CONFLICT(item_name) DO NOTHING
-      """, (it["name"], it.get("unit", "1គីឡូ"), it.get("group", "ស្បៀងគោល"), it.get("category", "បន្លែ"), b_p, h_10, l_10))
+  # Ensure seasonal and average price columns exist in benchmark_prices
+  bm_cols = [c[1] for c in cursor.execute("PRAGMA table_info(benchmark_prices)").fetchall()]
+  for col_name in ['season1_price', 'season2_price', 'avg_price']:
+    if col_name not in bm_cols:
+      cursor.execute(f"ALTER TABLE benchmark_prices ADD COLUMN {col_name} REAL DEFAULT 0")
 
   conn.commit()
 
@@ -5259,51 +5253,108 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
   else:
     # ----------------- ADMIN BENCHMARK MANAGEMENT -----------------
     st.info(
-        "💡 មុខទំនិញទាំង **៦១ មុខ** ត្រូវបានចាប់យកដោយស្វ័យប្រវត្តិចេញពីសន្លឹក «តម្លៃទំនិញ» នៃឯកសារ Excel «បញ្ជីមុខម្ហូបដែលត្រូវបញ្ជាទិញ_2026.xlsm»។ "
-        "រាល់ការកែប្រែតម្លៃគោលនៅទីនេះ នឹងត្រូវបានធ្វើបច្ចុប្បន្នភាពចូលក្នុង Database សម្រាប់យកទៅប្រៀបធៀប (+១០% / -១០%) "
-        "ជាមួយតម្លៃអ្នកផ្គត់ផ្គង់ និងការចេញវិក្កយបត្រទូទាំងប្រព័ន្ធ។"
+        "💡 **បញ្ជីគ្រប់គ្រងទំនិញ និងតម្លៃពិគ្រោះ (Benchmark Matrix)**៖ "
+        "រៀបចំតាមគំរូរូបភាពស្ដង់ដារ ដោយប្រអប់ **«< 10%»** និង **«> 10%»** ស្ថិតនៅបន្ទាប់ពីឈ្មោះទំនិញសម្រាប់វាយបញ្ចូល "
+        "ហើយប្រអប់ **«តម្លៃគោល»** ស្ថិតនៅខាងចុងគេ គណនាស្វ័យប្រវត្តតាមរូបមន្ត `(តម្លៃខ្ពស់ + តម្លៃទាប) / 2`។ "
+        "រួមមានតម្លៃរដូវទី១, រដូវទី២, តម្លៃមធ្យម និងការផ្ទៀងផ្ទាត់ «រាប់បញ្ចូល?» (បៃតង/លឿង/ក្រហម) ដូចរូបភាពគំរូ ១០០%។"
     )
 
     # Load current benchmark prices from database
     bm_rows = cursor.execute("""
-      SELECT item_name, base_price, high_10, low_10, unit, group_name, category
+      SELECT item_name, base_price, high_10, low_10, unit, group_name, category, season1_price, season2_price, avg_price
       FROM benchmark_prices
     """).fetchall()
-    bm_db_map = {r[0]: {"base": float(r[1] or 0), "high": float(r[2] or 0), "low": float(r[3] or 0), "unit": r[4], "group": r[5], "cat": r[6]} for r in bm_rows}
+    bm_db_map = {
+        r[0]: {
+            "base": float(r[1] or 0),
+            "high": float(r[2] or 0),
+            "low": float(r[3] or 0),
+            "unit": r[4],
+            "group": r[5],
+            "cat": r[6],
+            "s1": float(r[7] or 0),
+            "s2": float(r[8] or 0),
+            "avg": float(r[9] or 0),
+        }
+        for r in bm_rows
+    }
 
-    # Initialize session state for matrix
-    if "admin_bm_matrix" not in st.session_state:
-      st.session_state["admin_bm_matrix"] = {}
+    # Initialize session state for matrix inputs
+    if "admin_bm_inputs" not in st.session_state:
+      st.session_state["admin_bm_inputs"] = {}
       for it in SUPPLIER_PRODUCT_CATALOG:
         inm = it["name"]
-        db_item = bm_db_map.get(inm)
-        if db_item and db_item["base"] > 0:
-          b_val = db_item["base"]
-        else:
-          b_val = float(it.get("base_avg", 0) or it.get("default_p1", 0))
-        st.session_state["admin_bm_matrix"][inm] = float(b_val)
+        db_it = bm_db_map.get(inm, {})
+        low_val = float(db_it.get("low", 0) or 0)
+        high_val = float(db_it.get("high", 0) or 0)
+        s1_val = float(db_it.get("s1", 0) or it.get("default_p1", 0) or 0)
+        s2_val = float(db_it.get("s2", 0) or it.get("default_p2", 0) or 0)
 
-    # Top KPI Metrics
+        # If low/high not set yet, initialize from base_avg or default_p1
+        if low_val == 0 and high_val == 0:
+          ref_b = float(db_it.get("base", 0) or it.get("base_avg", 0) or s1_val or 0)
+          low_val = round(ref_b * 0.90, 2)
+          high_val = round(ref_b * 1.10, 2)
+
+        st.session_state["admin_bm_inputs"][inm] = {
+            "low": low_val,
+            "high": high_val,
+            "s1": s1_val,
+            "s2": s2_val,
+        }
+
+    # Backward compatibility for admin_bm_matrix
+    if "admin_bm_matrix" not in st.session_state:
+      st.session_state["admin_bm_matrix"] = {}
+    for inm, vals in st.session_state["admin_bm_inputs"].items():
+      h = vals["high"]
+      l = vals["low"]
+      if h > 0 and l > 0:
+        st.session_state["admin_bm_matrix"][inm] = round((h + l) / 2.0, 2)
+      elif h > 0:
+        st.session_state["admin_bm_matrix"][inm] = round(h / 1.10, 2)
+      elif l > 0:
+        st.session_state["admin_bm_matrix"][inm] = round(l / 0.90, 2)
+      else:
+        st.session_state["admin_bm_matrix"][inm] = 0.0
+
+    # Top KPI Metrics (Live Compliance Summary)
+    total_items = len(SUPPLIER_PRODUCT_CATALOG)
+    compliant_cnt = 0
+    over_cnt = 0
+    under_cnt = 0
+    for it in SUPPLIER_PRODUCT_CATALOG:
+      inm = it["name"]
+      in_data = st.session_state["admin_bm_inputs"].get(inm, {})
+      cur_l = float(st.session_state.get(f"bm_low_{inm}", in_data.get("low", 0)))
+      cur_h = float(st.session_state.get(f"bm_high_{inm}", in_data.get("high", 0)))
+      cur_s1 = float(st.session_state.get(f"bm_s1_{inm}", in_data.get("s1", 0)))
+      cur_s2 = float(st.session_state.get(f"bm_s2_{inm}", in_data.get("s2", 0)))
+      avg_p = round((cur_s1 + cur_s2) / 2.0, 2) if (cur_s1 > 0 and cur_s2 > 0) else (cur_s1 or cur_s2 or 0)
+      if avg_p > 0 and cur_h > 0:
+        if cur_l > 0 and avg_p < cur_l:
+          under_cnt += 1
+        elif avg_p <= cur_h:
+          compliant_cnt += 1
+        else:
+          over_cnt += 1
+
     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
     with kpi1:
-      st.metric("📦 មុខទំនិញសរុប", f"{len(SUPPLIER_PRODUCT_CATALOG)} មុខ", delta="ពី Excel")
+      st.metric("📦 មុខទំនិញសរុប", f"{total_items} មុខ", delta="ពី Excel")
     with kpi2:
-      cnt_g1 = len([x for x in SUPPLIER_PRODUCT_CATALOG if x.get("group") == "ស្បៀងគោល"])
-      st.metric("🌾 ស្បៀងគោល", f"{cnt_g1} មុខ", delta="វគ្គលើ")
+      st.metric("✔️ រាប់បញ្ចូលបាន", f"{compliant_cnt} មុខ", delta="អនុលោមតាមពិគ្រោះ", delta_color="normal")
     with kpi3:
-      cnt_g2 = len([x for x in SUPPLIER_PRODUCT_CATALOG if x.get("group") == "បន្លែគោល"])
-      st.metric("🥦 បន្លែគោល", f"{cnt_g2} មុខ", delta="វគ្គលើ")
+      st.metric("❌ មិនរាប់បញ្ចូល", f"{over_cnt} មុខ", delta="លើសពិដាន +10%", delta_color="inverse")
     with kpi4:
-      cnt_g3 = len([x for x in SUPPLIER_PRODUCT_CATALOG if x.get("group") == "ស្បៀងបន្ថែម"])
-      st.metric("🥩 ស្បៀងបន្ថែម", f"{cnt_g3} មុខ", delta="វគ្គក្រោម")
+      st.metric("⚠️ ទាបជាងពិគ្រោះ", f"{under_cnt} មុខ", delta="ទាបជាង -10%", delta_color="off")
     with kpi5:
-      cnt_g4 = len([x for x in SUPPLIER_PRODUCT_CATALOG if x.get("group") == "បន្លែបន្ថែម"])
-      st.metric("🥕 បន្លែបន្ថែម", f"{cnt_g4} មុខ", delta="វគ្គក្រោម")
+      st.metric("🏷️ ក្រុមទំនិញ", "៤ ក្រុម", delta="ស្បៀង និងបន្លែ")
 
     st.markdown("---")
 
     # Filter Controls
-    col_f_grp, col_f_cat, col_f_search = st.columns([1.5, 1.5, 1.2])
+    col_f_grp, col_f_cat, col_f_search, col_f_status = st.columns([1.4, 1.4, 1.2, 1.2])
     with col_f_grp:
       filter_grp = st.segmented_control(
           "🏷️ ជ្រើសរើសក្រុមទំនិញ៖",
@@ -5320,6 +5371,12 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
       ) or "🌟 ទាំងអស់"
     with col_f_search:
       search_kw = st.text_input("🔍 ស្វែងរកមុខទំនិញ...", placeholder="វាយឈ្មោះទំនិញ...", key="admin_bm_search_kw").strip()
+    with col_f_status:
+      filter_status = st.selectbox(
+          "🎯 តម្រងស្ថានភាព៖",
+          options=["🌟 ទាំងអស់", "✔️ រាប់បញ្ចូលបាន", "❌ មិនរាប់បញ្ចូល (លើស)", "⚠️ ទាបជាងពិគ្រោះ"],
+          key="admin_bm_status_filter"
+      )
 
     c_grp_clean = filter_grp.replace("🌾 ", "").replace("🥦 ", "").replace("🥩 ", "").replace("🥕 ", "").replace("🌟 ", "").strip()
     c_cat_clean = filter_cat.replace("🍚 ", "").replace("🫗 ", "").replace("🧂 ", "").replace("🥩 ", "").replace("🥬 ", "").replace("🌟 ", "").strip()
@@ -5327,140 +5384,452 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
     # Filter products
     filtered_catalog = []
     for it in SUPPLIER_PRODUCT_CATALOG:
+      inm = it["name"]
+      in_data = st.session_state["admin_bm_inputs"].get(inm, {})
+      cur_l = float(st.session_state.get(f"bm_low_{inm}", in_data.get("low", 0)))
+      cur_h = float(st.session_state.get(f"bm_high_{inm}", in_data.get("high", 0)))
+      cur_s1 = float(st.session_state.get(f"bm_s1_{inm}", in_data.get("s1", 0)))
+      cur_s2 = float(st.session_state.get(f"bm_s2_{inm}", in_data.get("s2", 0)))
+      avg_p = round((cur_s1 + cur_s2) / 2.0, 2) if (cur_s1 > 0 and cur_s2 > 0) else (cur_s1 or cur_s2 or 0)
+
+      if avg_p > 0 and cur_h > 0:
+        if cur_l > 0 and avg_p < cur_l:
+          it_status = "⚠️ ទាបជាងពិគ្រោះ"
+        elif avg_p <= cur_h:
+          it_status = "✔️ រាប់បញ្ចូលបាន"
+        else:
+          it_status = "❌ មិនរាប់បញ្ចូល (លើស)"
+      else:
+        it_status = "មិនទាន់កំណត់"
+
       if c_grp_clean != "ទាំងអស់" and it.get("group") != c_grp_clean:
         continue
       if c_cat_clean != "ទាំងអស់" and it.get("category") != c_cat_clean:
         continue
-      if search_kw and (search_kw.lower() not in it["name"].lower()):
+      if search_kw and (search_kw.lower() not in inm.lower()):
+        continue
+      if filter_status != "🌟 ទាំងអស់" and it_status != filter_status:
         continue
       filtered_catalog.append(it)
 
-    st.markdown(f"##### 📋 បញ្ជីមុខទំនិញ (កំពុងបង្ហាញ {len(filtered_catalog)} នៃ {len(SUPPLIER_PRODUCT_CATALOG)} មុខ)")
+    # 3 View Tabs
+    tab_matrix, tab_image_view, tab_data_editor = st.tabs([
+        "📝 តារាងវាយបញ្ចូល និងគណនាតម្លៃ (Matrix Input Editor)",
+        "🖼️ តារាងគំរូដូចរូបភាព ១០០% (Styled Image View)",
+        "⚡ កែសម្រួលរហ័សបែប Excel (Spreadsheet Editor)"
+    ])
 
-    # Table Header Row
-    st.markdown("""
-    <div style="background: #f1f5f9; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; font-weight: 700; color: #1e293b; margin-bottom: 8px;">
-      <div style="display: flex; align-items: center;">
-        <div style="width: 5%;">ល.រ</div>
-        <div style="width: 32%;">មុខទំនិញ & ឯកត្តា (ពី Excel)</div>
-        <div style="width: 21%; text-align: center;">🏷️ តម្លៃគោល (៛) [បញ្ចូល]</div>
-        <div style="width: 21%; text-align: center;">🔺 ខ្ពស់ជាង ១០% (+10%) [ស្វ័យប្រវត្ត]</div>
-        <div style="width: 21%; text-align: center;">🔻 ទាបជាង ១០% (-10%) [ស្វ័យប្រវត្ត]</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    with tab_matrix:
+      f_col1, f_col2 = st.columns([3, 1.5])
+      with f_col1:
+        st.markdown(f"##### 📋 បញ្ជីមុខទំនិញ (កំពុងបង្ហាញ {len(filtered_catalog)} នៃ {len(SUPPLIER_PRODUCT_CATALOG)} មុខ)")
+      with f_col2:
+        page_opt = st.selectbox("ចំនួនបង្ហាញក្នុងមួយទំព័រ", [15, 30, 60, "ទាំងអស់"], index=1, key="bm_matrix_page_size")
 
-    if not filtered_catalog:
-      st.warning("⚠️ គ្មានមុខទំនិញដែលត្រូវគ្នានឹងការស្វែងរក ឬក្រុមដែលបានជ្រើសរើសឡើយ។")
-    else:
-      for idx, it in enumerate(filtered_catalog, 1):
+      if not filtered_catalog:
+        st.warning("⚠️ គ្មានមុខទំនិញដែលត្រូវគ្នានឹងការស្វែងរក ឬក្រុមដែលបានជ្រើសរើសឡើយ។")
+      else:
+        page_size = len(filtered_catalog) if page_opt == "ទាំងអស់" else int(page_opt)
+        total_pages = max(1, (len(filtered_catalog) + page_size - 1) // page_size)
+        if total_pages > 1:
+          p_col, _ = st.columns([1.5, 4.5])
+          with p_col:
+            cur_page = st.number_input("ទំព័រទី", min_value=1, max_value=total_pages, value=1, key="bm_matrix_cur_page")
+        else:
+          cur_page = 1
+
+        start_idx = (cur_page - 1) * page_size
+        end_idx = start_idx + page_size
+        page_catalog = filtered_catalog[start_idx:end_idx]
+
+        # Table Header Row matching Image Design
+        st.markdown("""
+        <div style="background: #e0f2fe; border: 1.5px solid #93c5fd; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
+          <div style="display: flex; align-items: center; text-align: center; font-weight: 700; color: #0284c7; border-bottom: 1px solid #bfdbfe; padding-bottom: 6px; margin-bottom: 6px;">
+            <div style="width: 22%; text-align: left; font-size: 15px;">ឈ្មោះទំនិញ ៖</div>
+            <div style="width: 26%; font-size: 14px;">តម្លៃគោលពិគ្រោះ (វាយបញ្ចូល)</div>
+            <div style="width: 36%; font-size: 14px;">តម្លៃ គិតជាគីឡូក្រាម</div>
+            <div style="width: 10%; font-size: 14px;">តម្លៃគោល</div>
+            <div style="width: 6%; font-size: 14px;">រាប់បញ្ចូល?</div>
+          </div>
+          <div style="display: flex; align-items: center; text-align: center; font-weight: 600; font-size: 12px; color: #334155;">
+            <div style="width: 22%; text-align: left;">មុខទំនិញ & ឯកត្តា</div>
+            <div style="width: 13%; color: #0f766e;">&lt; 10% (ទាប) [វាយចូល]</div>
+            <div style="width: 13%; color: #c2410c;">&gt; 10% (ខ្ពស់) [វាយចូល]</div>
+            <div style="width: 12%;">រដូវទី១ (វិច្ឆិកា-មីនា)</div>
+            <div style="width: 12%;">រដូវទី២ (មេសា-ធ្នូ)</div>
+            <div style="width: 12%;">តម្លៃមធ្យម (Auto)</div>
+            <div style="width: 10%; color: #4338ca;">ស្វ័យប្រវត្តិ [(ខ្ពស់+ទាប)/2]</div>
+            <div style="width: 6%;">ស្ថានភាព</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        for it in page_catalog:
+          inm = it["name"]
+          unit = it.get("unit", "1គីឡូ")
+          grp = it.get("group", "")
+          in_data = st.session_state["admin_bm_inputs"].get(inm, {})
+
+          cur_l = float(st.session_state.get(f"bm_low_{inm}", in_data.get("low", 0)))
+          cur_h = float(st.session_state.get(f"bm_high_{inm}", in_data.get("high", 0)))
+          cur_s1 = float(st.session_state.get(f"bm_s1_{inm}", in_data.get("s1", 0)))
+          cur_s2 = float(st.session_state.get(f"bm_s2_{inm}", in_data.get("s2", 0)))
+
+          # Live auto calculation
+          calc_avg = round((cur_s1 + cur_s2) / 2.0, 2) if (cur_s1 > 0 and cur_s2 > 0) else (cur_s1 or cur_s2 or 0)
+          if cur_h > 0 and cur_l > 0:
+            calc_base = round((cur_h + cur_l) / 2.0, 2)
+          elif cur_h > 0:
+            calc_base = round(cur_h / 1.10, 2)
+          elif cur_l > 0:
+            calc_base = round(cur_l / 0.90, 2)
+          else:
+            calc_base = 0.0
+
+          # Compliance status & colors matching image
+          if calc_avg > 0 and cur_h > 0:
+            if cur_l > 0 and calc_avg < cur_l:
+              row_bg = "#fef9c3"   # Yellow
+              status_border = "#eab308"
+              status_icon = "⚠️"
+              status_tip = "តម្លៃមធ្យមទាបជាងកម្រិតទាប ១០%"
+            elif calc_avg <= cur_h:
+              row_bg = "#dcfce7"   # Light green
+              status_border = "#22c55e"
+              status_icon = "✔️"
+              status_tip = "ត្រឹមត្រូវ អនុលោមតាមតម្លៃពិគ្រោះ (អាចរាប់បញ្ចូលបាន)"
+            else:
+              row_bg = "#fee2e2"   # Light pink/red
+              status_border = "#ef4444"
+              status_icon = "❌"
+              status_tip = "មិនរាប់បញ្ចូល (លើសពិដានតម្លៃខ្ពស់ ១០%)"
+          else:
+            row_bg = "#ffffff"
+            status_border = "#cbd5e1"
+            status_icon = "➖"
+            status_tip = "មិនទាន់កំណត់គ្រប់ជ្រុងជ្រោយ"
+
+          c_name, c_low, c_high, c_s1, c_s2, c_avg, c_base, c_status = st.columns([2.2, 1.3, 1.3, 1.2, 1.2, 1.2, 1.0, 0.6])
+          with c_name:
+            st.markdown(f"""
+            <div style="background-color: {row_bg}; border-left: 4px solid {status_border}; padding: 6px 8px; border-radius: 4px; min-height: 48px;">
+              <span style="font-weight: 700; font-size: 14px; color: #0f172a;">{inm}</span>
+              <span style="font-size: 11px; color: #64748b;">({unit})</span><br/>
+              <span style="font-size: 10px; color: #475569; background: #e2e8f0; padding: 1px 5px; border-radius: 4px;">{grp}</span>
+            </div>
+            """, unsafe_allow_html=True)
+          with c_low:
+            new_low = st.number_input(
+                f"<10% - {inm}",
+                min_value=0.0,
+                max_value=1000000.0,
+                step=50.0,
+                value=cur_l,
+                key=f"bm_low_{inm}",
+                label_visibility="collapsed"
+            )
+            st.session_state["admin_bm_inputs"][inm]["low"] = new_low
+          with c_high:
+            new_high = st.number_input(
+                f">10% - {inm}",
+                min_value=0.0,
+                max_value=1000000.0,
+                step=50.0,
+                value=cur_h,
+                key=f"bm_high_{inm}",
+                label_visibility="collapsed"
+            )
+            st.session_state["admin_bm_inputs"][inm]["high"] = new_high
+          with c_s1:
+            new_s1 = st.number_input(
+                f"រដូវទី១ - {inm}",
+                min_value=0.0,
+                max_value=1000000.0,
+                step=50.0,
+                value=cur_s1,
+                key=f"bm_s1_{inm}",
+                label_visibility="collapsed"
+            )
+            st.session_state["admin_bm_inputs"][inm]["s1"] = new_s1
+          with c_s2:
+            new_s2 = st.number_input(
+                f"រដូវទី២ - {inm}",
+                min_value=0.0,
+                max_value=1000000.0,
+                step=50.0,
+                value=cur_s2,
+                key=f"bm_s2_{inm}",
+                label_visibility="collapsed"
+            )
+            st.session_state["admin_bm_inputs"][inm]["s2"] = new_s2
+          with c_avg:
+            st.text_input(
+                f"មធ្យម - {inm}",
+                value=f"{calc_avg:,.1f}",
+                disabled=True,
+                key=f"bm_disp_avg_{inm}",
+                label_visibility="collapsed"
+            )
+          with c_base:
+            st.text_input(
+                f"គោល - {inm}",
+                value=f"{calc_base:,.1f}",
+                disabled=True,
+                key=f"bm_disp_base_{inm}",
+                label_visibility="collapsed"
+            )
+          with c_status:
+            st.markdown(f"""
+            <div style="background-color: {row_bg}; border: 1px solid {status_border}; border-radius: 6px; text-align: center; padding: 7px 0; font-size: 17px; font-weight: 700;" title="{status_tip}">
+              {status_icon}
+            </div>
+            """, unsafe_allow_html=True)
+
+    with tab_image_view:
+      st.markdown("##### 🖼️ តារាងតាមគំរូរូបភាពស្ដង់ដារ (ពណ៌បៃតង/លឿង/ក្រហម និងប្រអប់ទម្រង់ដូចរូបភាព)")
+      st.caption("✨ បង្ហាញការផ្ទៀងផ្ទាត់រវាងតម្លៃមធ្យម និងតម្លៃពិគ្រោះ (&lt; 10% / &gt; 10%) ព្រមទាំងតម្លៃគោលស្វ័យប្រវត្តិតាមគំរូរូបភាពពិតប្រាកដ។")
+
+      # Build HTML table matching screenshot
+      html_rows = []
+      for it in filtered_catalog:
         inm = it["name"]
         unit = it.get("unit", "1គីឡូ")
-        grp = it.get("group", "")
-        cat = it.get("category", "")
-        cur_base = float(st.session_state["admin_bm_matrix"].get(inm, it.get("base_avg", 0)))
+        in_data = st.session_state["admin_bm_inputs"].get(inm, {})
+        cur_l = float(st.session_state.get(f"bm_low_{inm}", in_data.get("low", 0)))
+        cur_h = float(st.session_state.get(f"bm_high_{inm}", in_data.get("high", 0)))
+        cur_s1 = float(st.session_state.get(f"bm_s1_{inm}", in_data.get("s1", 0)))
+        cur_s2 = float(st.session_state.get(f"bm_s2_{inm}", in_data.get("s2", 0)))
 
-        c_no, c_name, c_inp_base, c_disp_high, c_disp_low = st.columns([0.5, 3.2, 2.1, 2.1, 2.1])
-        with c_no:
-          st.markdown(f"<div style='padding-top: 10px; font-weight: 600; color: #64748b;'>{idx}</div>", unsafe_allow_html=True)
-        with c_name:
-          st.markdown(f"""
-          <div style='padding-top: 4px;'>
-            <span style='font-size: 15px; font-weight: 700; color: #0f172a;'>{inm}</span>
-            <span style='font-size: 13px; color: #475569;'>({unit})</span><br/>
-            <span style='background: #e2e8f0; padding: 2px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; color: #334155;'>{grp}</span>
-            <span style='background: #f1f5f9; border: 1px solid #e2e8f0; padding: 1px 6px; border-radius: 10px; font-size: 11px; color: #64748b; margin-left: 4px;'>{cat}</span>
-          </div>
-          """, unsafe_allow_html=True)
-        with c_inp_base:
-          new_base = st.number_input(
-              f"តម្លៃគោល - {inm}",
-              min_value=0.0,
-              max_value=1000000.0,
-              step=50.0,
-              value=cur_base,
-              key=f"adm_base_in_{inm}",
-              label_visibility="collapsed"
-          )
-          st.session_state["admin_bm_matrix"][inm] = new_base
-        with c_disp_high:
-          auto_high = round(new_base * 1.10)
-          st.text_input(
-              f"ខ្ពស់ជាង 10% - {inm}",
-              value=f"🔺 {auto_high:,.0f} ៛",
-              disabled=True,
-              key=f"adm_high_disp_{inm}",
-              label_visibility="collapsed"
-          )
-        with c_disp_low:
-          auto_low = round(new_base * 0.90)
-          st.text_input(
-              f"ទាបជាង 10% - {inm}",
-              value=f"🔻 {auto_low:,.0f} ៛",
-              disabled=True,
-              key=f"adm_low_disp_{inm}",
-              label_visibility="collapsed"
-          )
+        calc_avg = round((cur_s1 + cur_s2) / 2.0, 2) if (cur_s1 > 0 and cur_s2 > 0) else (cur_s1 or cur_s2 or 0)
+        calc_base = round((cur_h + cur_l) / 2.0, 2) if (cur_h > 0 and cur_l > 0) else (round(cur_h / 1.10, 2) if cur_h > 0 else 0)
+
+        if calc_avg > 0 and cur_h > 0:
+          if cur_l > 0 and calc_avg < cur_l:
+            bg_col = "#fef9c3"
+            chk_icon = "<span style='color: #ca8a04; font-size: 16px; font-weight: bold;'>⚠️</span>"
+          elif calc_avg <= cur_h:
+            bg_col = "#dcfce7"
+            chk_icon = "<span style='color: #16a34a; font-size: 18px; font-weight: bold;'>✔</span>"
+          else:
+            bg_col = "#fee2e2"
+            chk_icon = "<span style='color: #dc2626; font-size: 18px; font-weight: bold;'>✖</span>"
+        else:
+          bg_col = "#ffffff"
+          chk_icon = "<span style='color: #94a3b8;'>-</span>"
+
+        box_style = "background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 4px; padding: 5px 8px; text-align: right; font-weight: 600; color: #0f172a; width: 95%; display: inline-block;"
+
+        html_rows.append(f"""
+        <tr style="background-color: {bg_col}; border-bottom: 1px solid #e2e8f0;">
+          <td style="padding: 8px 10px; font-weight: 700; color: #0f172a; font-size: 14px;">{inm} <span style="font-size: 11px; font-weight: normal; color: #64748b;">({unit})</span></td>
+          <td style="padding: 6px; text-align: center;"><div style="{box_style}">{cur_s1:,.1f}</div></td>
+          <td style="padding: 6px; text-align: center;"><div style="{box_style}">{cur_s2:,.1f}</div></td>
+          <td style="padding: 6px; text-align: center;"><div style="{box_style} font-weight: 700;">{calc_avg:,.1f}</div></td>
+          <td style="padding: 6px; text-align: center;"><div style="{box_style} border-color: #0f766e; color: #0f766e;">{cur_l:,.1f}</div></td>
+          <td style="padding: 6px; text-align: center;"><div style="{box_style} border-color: #c2410c; color: #c2410c;">{cur_h:,.1f}</div></td>
+          <td style="padding: 6px; text-align: center;"><div style="{box_style} border-color: #4338ca; color: #4338ca; font-weight: 700;">{calc_base:,.1f}</div></td>
+          <td style="padding: 6px; text-align: center;">{chk_icon}</td>
+        </tr>
+        """)
+
+      st.markdown(f"""
+      <div style="overflow-x: auto; border: 1.5px solid #cbd5e1; border-radius: 8px; margin-top: 10px;">
+        <table style="width: 100%; border-collapse: collapse; font-family: 'Khmer OS Siemreap', 'Khmer OS', sans-serif;">
+          <thead>
+            <tr style="background: #e0f2fe; border-bottom: 2px solid #0284c7; color: #0284c7;">
+              <th style="padding: 10px; text-align: left; font-size: 15px; width: 22%;">ឈ្មោះទំនិញ ៖</th>
+              <th colspan="3" style="padding: 10px; text-align: center; font-size: 14px; border-left: 1px solid #bfdbfe; border-right: 1px solid #bfdbfe; width: 36%;">តម្លៃ គិតជាគីឡូក្រាម</th>
+              <th colspan="2" style="padding: 10px; text-align: center; font-size: 14px; border-right: 1px solid #bfdbfe; width: 24%;">តម្លៃគោលពិគ្រោះ</th>
+              <th style="padding: 10px; text-align: center; font-size: 14px; border-right: 1px solid #bfdbfe; width: 12%;">តម្លៃគោល</th>
+              <th style="padding: 10px; text-align: center; font-size: 14px; width: 6%;">រាប់បញ្ចូល?</th>
+            </tr>
+            <tr style="background: #f1f5f9; border-bottom: 1px solid #cbd5e1; font-size: 12px; color: #334155; font-weight: 600;">
+              <th style="padding: 6px 10px; text-align: left;"></th>
+              <th style="padding: 6px; text-align: center;">តម្លៃរដូវទី១<br><span style="font-size: 11px; font-weight: normal; color: #64748b;">(វិច្ឆិកា-មីនា)</span></th>
+              <th style="padding: 6px; text-align: center;">តម្លៃរដូវទី២<br><span style="font-size: 11px; font-weight: normal; color: #64748b;">(មេសា-ធ្នូ)</span></th>
+              <th style="padding: 6px; text-align: center;">តម្លៃមធ្យម</th>
+              <th style="padding: 6px; text-align: center; color: #0f766e;">&lt; 10% (ទាប)</th>
+              <th style="padding: 6px; text-align: center; color: #c2410c;">&gt; 10% (ខ្ពស់)</th>
+              <th style="padding: 6px; text-align: center; color: #4338ca;">ស្វ័យប្រវត្ត [(ខ្ពស់+ទាប)/2]</th>
+              <th style="padding: 6px; text-align: center;">ស្ថានភាព</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(html_rows)}
+          </tbody>
+        </table>
+      </div>
+      """, unsafe_allow_html=True)
+
+    with tab_data_editor:
+      st.markdown("##### ⚡ កែសម្រួលរហ័សបែប Excel Spreadsheet")
+      st.caption("💡 អាចវាយបញ្ចូលកែប្រែប្រអប់ `< 10%`, `> 10%`, `តម្លៃរដូវទី១`, និង `តម្លៃរដូវទី២` ផ្ទាល់នៅលើតារាង រួចចុច Save ខាងក្រោម។")
+
+      editor_rows = []
+      for it in filtered_catalog:
+        inm = it["name"]
+        in_data = st.session_state["admin_bm_inputs"].get(inm, {})
+        cur_l = float(st.session_state.get(f"bm_low_{inm}", in_data.get("low", 0)))
+        cur_h = float(st.session_state.get(f"bm_high_{inm}", in_data.get("high", 0)))
+        cur_s1 = float(st.session_state.get(f"bm_s1_{inm}", in_data.get("s1", 0)))
+        cur_s2 = float(st.session_state.get(f"bm_s2_{inm}", in_data.get("s2", 0)))
+        calc_avg = round((cur_s1 + cur_s2) / 2.0, 2) if (cur_s1 > 0 and cur_s2 > 0) else (cur_s1 or cur_s2 or 0)
+        calc_base = round((cur_h + cur_l) / 2.0, 2) if (cur_h > 0 and cur_l > 0) else (round(cur_h / 1.10, 2) if cur_h > 0 else 0)
+
+        if calc_avg > 0 and cur_h > 0:
+          status_str = "✔️ រាប់បញ្ចូល" if calc_avg <= cur_h else ("⚠️ ទាបជាងពិគ្រោះ" if calc_avg < cur_l else "❌ មិនរាប់បញ្ចូល")
+        else:
+          status_str = "➖ មិនទាន់កំណត់"
+
+        editor_rows.append({
+            "ឈ្មោះទំនិញ": inm,
+            "ឯកត្តា": it.get("unit", "1គីឡូ"),
+            "< 10% (ទាប)": cur_l,
+            "> 10% (ខ្ពស់)": cur_h,
+            "រដូវទី១": cur_s1,
+            "រដូវទី២": cur_s2,
+            "តម្លៃមធ្យម": calc_avg,
+            "តម្លៃគោល (Auto)": calc_base,
+            "រាប់បញ្ចូល?": status_str,
+        })
+
+      df_sheet = pd.DataFrame(editor_rows)
+      edited_sheet = st.data_editor(
+          df_sheet,
+          disabled=["ឈ្មោះទំនិញ", "ឯកត្តា", "តម្លៃមធ្យម", "តម្លៃគោល (Auto)", "រាប់បញ្ចូល?"],
+          hide_index=True,
+          use_container_width=True,
+          key="bm_spreadsheet_editor"
+      )
+
+      # Sync from data editor if modified
+      if edited_sheet is not None and not edited_sheet.empty:
+        for _, r in edited_sheet.iterrows():
+          inm = r["ឈ្មោះទំនិញ"]
+          if inm in st.session_state["admin_bm_inputs"]:
+            st.session_state["admin_bm_inputs"][inm]["low"] = float(r["< 10% (ទាប)"] or 0)
+            st.session_state["admin_bm_inputs"][inm]["high"] = float(r["> 10% (ខ្ពស់)"] or 0)
+            st.session_state["admin_bm_inputs"][inm]["s1"] = float(r["រដូវទី១"] or 0)
+            st.session_state["admin_bm_inputs"][inm]["s2"] = float(r["រដូវទី២"] or 0)
 
     # Action buttons for Admin
     st.divider()
     btn_c1, btn_c2, btn_c3 = st.columns([2, 1.5, 1.5])
     with btn_c1:
-      if st.button("💾 រក្សាទុកតម្លៃគោលទំនិញទាំងអស់ (Save All Base Prices)", type="primary", use_container_width=True, key="btn_save_all_benchmarks"):
+      if st.button("💾 រក្សាទុកតម្លៃគោលទំនិញទាំងអស់ (Save All Prices)", type="primary", use_container_width=True, key="btn_save_all_benchmarks"):
         for it in SUPPLIER_PRODUCT_CATALOG:
           inm = it["name"]
           unit = it.get("unit", "1គីឡូ")
           grp = it.get("group", "ស្បៀងគោល")
           cat = it.get("category", "បន្លែ")
-          base_val = float(st.session_state["admin_bm_matrix"].get(inm, it.get("base_avg", 0)))
-          h_val = round(base_val * 1.10, 2)
-          l_val = round(base_val * 0.90, 2)
+
+          in_data = st.session_state["admin_bm_inputs"].get(inm, {})
+          low_v = float(st.session_state.get(f"bm_low_{inm}", in_data.get("low", 0)))
+          high_v = float(st.session_state.get(f"bm_high_{inm}", in_data.get("high", 0)))
+          s1_v = float(st.session_state.get(f"bm_s1_{inm}", in_data.get("s1", 0)))
+          s2_v = float(st.session_state.get(f"bm_s2_{inm}", in_data.get("s2", 0)))
+
+          # Calculate avg and base
+          avg_v = round((s1_v + s2_v) / 2.0, 2) if (s1_v > 0 and s2_v > 0) else (s1_v or s2_v or 0)
+          if high_v > 0 and low_v > 0:
+            base_v = round((high_v + low_v) / 2.0, 2)
+          elif high_v > 0:
+            base_v = round(high_v / 1.10, 2)
+          elif low_v > 0:
+            base_v = round(low_v / 0.90, 2)
+          else:
+            base_v = 0.0
+
+          # Update memory
+          st.session_state["admin_bm_inputs"][inm] = {
+              "low": low_v,
+              "high": high_v,
+              "s1": s1_v,
+              "s2": s2_v,
+          }
+          st.session_state["admin_bm_matrix"][inm] = base_v
+
           cursor.execute("""
-            INSERT INTO benchmark_prices (item_name, unit, group_name, category, base_price, high_10, low_10, updated_at, updated_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+            INSERT INTO benchmark_prices (item_name, unit, group_name, category, base_price, high_10, low_10, season1_price, season2_price, avg_price, updated_at, updated_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
             ON CONFLICT(item_name) DO UPDATE SET
+              unit=excluded.unit,
+              group_name=excluded.group_name,
+              category=excluded.category,
               base_price=excluded.base_price,
               high_10=excluded.high_10,
               low_10=excluded.low_10,
+              season1_price=excluded.season1_price,
+              season2_price=excluded.season2_price,
+              avg_price=excluded.avg_price,
               updated_at=datetime('now'),
               updated_by=excluded.updated_by
-          """, (inm, unit, grp, cat, base_val, h_val, l_val, user_info.get("username", "admin")))
+          """, (inm, unit, grp, cat, base_v, high_v, low_v, s1_v, s2_v, avg_v, user_info.get("username", "admin")))
         conn.commit()
-        st.success(f"🎉 បានរក្សាទុកបញ្ជីតម្លៃគោលទំនិញទាំង {len(SUPPLIER_PRODUCT_CATALOG)} មុខដោយជោគជ័យ! តម្លៃគោលថ្មីនេះនឹងត្រូវយកទៅប្រើប្រាស់ក្នុងគ្រប់ផ្នែកទាំងអស់។")
+        st.success(f"🎉 បានរក្សាទុកបញ្ជីតម្លៃទំនិញទាំង {len(SUPPLIER_PRODUCT_CATALOG)} មុខដោយជោគជ័យ! តម្លៃគោល និងតម្លៃពិគ្រោះថ្មីនេះនឹងត្រូវយកទៅប្រើប្រាស់ក្នុងគ្រប់ផ្នែកទាំងអស់។")
         st.rerun()
 
     with btn_c2:
       if st.button("🔄 យកតម្លៃដើមពី Excel (Reset to Excel Defaults)", use_container_width=True, key="btn_reset_all_benchmarks"):
         for it in SUPPLIER_PRODUCT_CATALOG:
           inm = it["name"]
-          def_val = float(it.get("base_avg", 0) or it.get("default_p1", 0))
-          st.session_state["admin_bm_matrix"][inm] = def_val
-        st.success("✅ បានកំណត់តម្លៃគោលទាំងអស់មកតាមឯកសារ Excel ដើមវិញ!")
+          s1 = float(it.get("default_p1", 0) or 0)
+          s2 = float(it.get("default_p2", 0) or 0)
+          def_base = float(it.get("base_avg", 0) or s1 or 0)
+          def_low = round(def_base * 0.90, 2)
+          def_high = round(def_base * 1.10, 2)
+
+          st.session_state["admin_bm_inputs"][inm] = {
+              "low": def_low,
+              "high": def_high,
+              "s1": s1,
+              "s2": s2,
+          }
+          st.session_state[f"bm_low_{inm}"] = def_low
+          st.session_state[f"bm_high_{inm}"] = def_high
+          st.session_state[f"bm_s1_{inm}"] = s1
+          st.session_state[f"bm_s2_{inm}"] = s2
+          st.session_state["admin_bm_matrix"][inm] = def_base
+        st.success("✅ បានកំណត់តម្លៃទាំងអស់មកតាមឯកសារ Excel ដើមវិញ!")
         st.rerun()
 
     with btn_c3:
       export_rows = []
       for idx, it in enumerate(SUPPLIER_PRODUCT_CATALOG, 1):
         inm = it["name"]
-        b_val = float(st.session_state["admin_bm_matrix"].get(inm, it.get("base_avg", 0)))
+        in_data = st.session_state["admin_bm_inputs"].get(inm, {})
+        cur_l = float(in_data.get("low", 0))
+        cur_h = float(in_data.get("high", 0))
+        cur_s1 = float(in_data.get("s1", 0))
+        cur_s2 = float(in_data.get("s2", 0))
+        avg_p = round((cur_s1 + cur_s2) / 2.0, 2) if (cur_s1 > 0 and cur_s2 > 0) else (cur_s1 or cur_s2 or 0)
+        calc_b = round((cur_h + cur_l) / 2.0, 2) if (cur_h > 0 and cur_l > 0) else 0
+
+        status_text = "រាប់បញ្ចូល" if (avg_p > 0 and cur_h > 0 and avg_p <= cur_h) else ("មិនរាប់បញ្ចូល" if (avg_p > cur_h) else "ទាបជាង")
+
         export_rows.append({
             "ល.រ": idx,
             "ឈ្មោះមុខទំនិញ": inm,
             "ឯកត្តា": it.get("unit", "1គីឡូ"),
             "ក្រុមទំនិញ": it.get("group", ""),
             "ប្រភេទ": it.get("category", ""),
-            "តម្លៃគោល (៛)": b_val,
-            "ខ្ពស់ជាង ១០% (៛)": round(b_val * 1.10),
-            "ទាបជាង ១០% (៛)": round(b_val * 0.90)
+            "< 10% (ទាប)": cur_l,
+            "> 10% (ខ្ពស់)": cur_h,
+            "តម្លៃរដូវទី១": cur_s1,
+            "តម្លៃរដូវទី២": cur_s2,
+            "តម្លៃមធ្យម": avg_p,
+            "តម្លៃគោល [(ខ្ពស់+ទាប)/2]": calc_b,
+            "រាប់បញ្ចូល?": status_text
         })
       df_export = pd.DataFrame(export_rows)
       excel_buf = io.BytesIO()
       with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
-        df_export.to_excel(writer, index=False, sheet_name="តម្លៃគោល")
+        df_export.to_excel(writer, index=False, sheet_name="តម្លៃទំនិញ និងតម្លៃគោល")
       st.download_button(
           "📥 ទាញយកជា Excel",
           data=excel_buf.getvalue(),
-          file_name="បញ្ជីតម្លៃគោលមុខទំនិញ_Admin.xlsx",
+          file_name="បញ្ជីគ្រប់គ្រងទំនិញនិងតម្លៃ_Admin.xlsx",
           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           use_container_width=True,
           key="btn_export_benchmarks_excel"
