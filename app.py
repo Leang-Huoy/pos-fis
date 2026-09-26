@@ -793,6 +793,39 @@ def evaluate_supplier_price_status(avg_price, base_price):
     }
 
 
+# ================= គោលការណ៍ជ្រើសរើសមុខទំនិញផ្គត់ផ្គង់ (ស្បៀងគោល, បន្លែគោល, អង្ករ, ប្រេងឆា, អំបិល, ស្បៀង/បន្លែបន្ថែម) =================
+CORE_PROTEIN_ITEMS = {"សាច់ជ្រូក៣ជាន់", "ស៊ុតទា", "ត្រីប្រា", "ត្រីរស់", "ត្រីអណ្តែង"}
+CORE_VEG_ITEMS = {x["name"] for x in SUPPLIER_PRODUCT_CATALOG if x.get("group") == "បន្លែគោល"}
+INDEPENDENT_COMMODITIES = {"អង្ករចម្រុះ", "ប្រេងឆា", "អំបិលអ៊ីយូត"}
+
+def on_toggle_supplier_product(inm, mat_k):
+  """
+  គ្រប់គ្រង Checkbox ជ្រើសយកមុខទំនិញ៖
+  - ស្បៀងគោល (សាច់ ត្រី ស៊ុត) និងបន្លែគោល: ធិក១ គឺធិកទាំងអស់ បើអត់១ គឺអត់ទាំងអស់
+  - អង្ករ ប្រេងឆា អំបិល: អាស្រ័យជ្រើសរើសដាច់ដោយឡែក
+  - ស្បៀងបន្ថែម និងបន្លែបន្ថែម: មានសិទ្ធិជ្រើសរើសតាមចិត្ត
+  """
+  chk_k = f"chk_status_{mat_k}_{inm}"
+  new_val = st.session_state.get(chk_k, True)
+
+  if mat_k in st.session_state and inm in st.session_state[mat_k]:
+    st.session_state[mat_k][inm]["selected"] = new_val
+
+  # ១. ផ្នែកស្បៀងគោល (សាច់ ត្រី ស៊ុត) ៖ បើធិក១ គឺធិកទាំងអស់ បើអត់១ គឺអត់ទាំងអស់
+  if inm in CORE_PROTEIN_ITEMS:
+    for sib in CORE_PROTEIN_ITEMS:
+      if mat_k in st.session_state and sib in st.session_state[mat_k]:
+        st.session_state[mat_k][sib]["selected"] = new_val
+      st.session_state[f"chk_status_{mat_k}_{sib}"] = new_val
+
+  # ២. ផ្នែកបន្លែគោល ៖ បើធិក១ គឺធិកទាំងអស់ បើអត់១ គឺអត់ទាំងអស់
+  elif inm in CORE_VEG_ITEMS:
+    for sib in CORE_VEG_ITEMS:
+      if mat_k in st.session_state and sib in st.session_state[mat_k]:
+        st.session_state[mat_k][sib]["selected"] = new_val
+      st.session_state[f"chk_status_{mat_k}_{sib}"] = new_val
+
+
 def get_supplier_prices_map(supplier_name):
   """ទាញយកតម្លៃទំនិញដែលបានកំណត់របស់អ្នកផ្គត់ផ្គង់ពីតារាង products"""
   res = {}
@@ -5180,26 +5213,59 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
     </div>
     """, unsafe_allow_html=True)
 
+    # គោលការណ៍ជ្រើសរើសមុខទំនិញ
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 100%); border: 1.5px solid #7dd3fc; border-radius: 10px; padding: 10px 16px; margin-bottom: 12px; font-size: 13px;">
+      <div style="font-weight: 700; color: #0369a1; margin-bottom: 5px;">🎯 គោលការណ៍ជ្រើសរើសមុខទំនិញផ្គត់ផ្គង់ (Check box តែមួយ ៖ បើធីកគឺជ្រើសយក បើអត់គឺមិនយក) ៖</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 14px; color: #1e293b;">
+        <span>🔗 <b>ស្បៀងគោល (សាច់ ត្រី ស៊ុត) &amp; បន្លែគោល ៖</b> ប្រសិនបើ ធិក១ គឺធិកទាំងអស់ បើអត់១ គឺអត់ទាំងអស់</span>
+        <span>🍚 <b>អង្ករ ប្រេងឆា អំបិល ៖</b> អាស្រ័យការជ្រើសរើសដាច់ដោយឡែក</span>
+        <span>✨ <b>ស្បៀងបន្ថែម &amp; បន្លែបន្ថែម ៖</b> មានសិទ្ធិជ្រើសរើសតាមចិត្ត</span>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     # Initialize price state for this supplier
     mat_key = f"sup_mat_{sup_id_for_key}"
     if mat_key not in st.session_state:
       st.session_state[mat_key] = {}
       saved_sup_prices = get_supplier_prices_map(cur_sup["supplier_name"]) if cur_sup else {}
       has_saved = bool(saved_sup_prices)
+
+      any_core_prot_saved = any(name in saved_sup_prices for name in CORE_PROTEIN_ITEMS) if has_saved else True
+      any_core_veg_saved = any(name in saved_sup_prices for name in CORE_VEG_ITEMS) if has_saved else True
+
       for it in SUPPLIER_PRODUCT_CATALOG:
         inm = it["name"]
         if inm in saved_sup_prices:
-          st.session_state[mat_key][inm] = {
-              "p1": float(saved_sup_prices[inm]["p1"]),
-              "p2": float(saved_sup_prices[inm]["p2"]),
-              "selected": True
-          }
+          p1_init = float(saved_sup_prices[inm]["p1"])
+          p2_init = float(saved_sup_prices[inm]["p2"])
         else:
-          st.session_state[mat_key][inm] = {
-              "p1": float(it["default_p1"]),
-              "p2": float(it["default_p2"]),
-              "selected": not has_saved
-          }
+          p1_init = float(it["default_p1"])
+          p2_init = float(it["default_p2"])
+
+        if inm in CORE_PROTEIN_ITEMS:
+          sel_val = any_core_prot_saved
+        elif inm in CORE_VEG_ITEMS:
+          sel_val = any_core_veg_saved
+        elif inm in INDEPENDENT_COMMODITIES:
+          sel_val = (inm in saved_sup_prices) if has_saved else True
+        else:
+          sel_val = (inm in saved_sup_prices) if has_saved else False
+
+        st.session_state[mat_key][inm] = {
+            "p1": p1_init,
+            "p2": p2_init,
+            "selected": sel_val
+        }
+        st.session_state[f"chk_status_{mat_key}_{inm}"] = sel_val
+
+    # ធានាថារាល់ Checkbox Key ទាំងអស់មានតម្លៃក្នុង Session State
+    for it in SUPPLIER_PRODUCT_CATALOG:
+      inm = it["name"]
+      chk_k = f"chk_status_{mat_key}_{inm}"
+      if chk_k not in st.session_state:
+        st.session_state[chk_k] = bool(st.session_state[mat_key].get(inm, {}).get("selected", True))
 
     # Group & Category Filter Buttons (បង្ហាញ Option ជ្រើសរើសទាំងអស់ពេញលេញ មិនកាត់)
     sel_grp = st.segmented_control(
@@ -5225,14 +5291,18 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
       with c_b1:
         if st.button("☑️ ធីកយកទាំងអស់", use_container_width=True, key=f"btn_bulk_tick_{sup_id_for_key}"):
           for it in SUPPLIER_PRODUCT_CATALOG:
-            if it["name"] in st.session_state[mat_key]:
-              st.session_state[mat_key][it["name"]]["selected"] = True
+            inm = it["name"]
+            if inm in st.session_state[mat_key]:
+              st.session_state[mat_key][inm]["selected"] = True
+            st.session_state[f"chk_status_{mat_key}_{inm}"] = True
           st.rerun()
       with c_b2:
         if st.button("❌ ដោះធីកទាំងអស់", use_container_width=True, key=f"btn_bulk_untick_{sup_id_for_key}"):
           for it in SUPPLIER_PRODUCT_CATALOG:
-            if it["name"] in st.session_state[mat_key]:
-              st.session_state[mat_key][it["name"]]["selected"] = False
+            inm = it["name"]
+            if inm in st.session_state[mat_key]:
+              st.session_state[mat_key][inm]["selected"] = False
+            st.session_state[f"chk_status_{mat_key}_{inm}"] = False
           st.rerun()
 
     clean_grp = sel_grp.replace("🌾 ", "").replace("🥦 ", "").replace("🥩 ", "").replace("🥕 ", "").replace("🌟 ", "").strip()
@@ -5299,7 +5369,7 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
       with th_col4:
         st.markdown("<div style='font-weight: 700; color: #1e293b; text-align: center;'>តម្លៃមធ្យម (៛)</div>", unsafe_allow_html=True)
       with th_col5:
-        st.markdown("<div style='font-weight: 700; color: #1e293b; text-align: center;'>ស្ថានភាព (☑️/❌)</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-weight: 700; color: #1e293b; text-align: center;'>ស្ថានភាព<br><span style='font-size: 11px; font-weight: 600; color: #0284c7;'>[ ☑️ ជ្រើសយក ]</span></div>", unsafe_allow_html=True)
       st.divider()
 
       for row_idx, it in enumerate(filtered_prods, 1):
@@ -5320,14 +5390,24 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
         with tr_col0:
           st.markdown(f"<div style='text-align: center; font-weight: 700; color: #64748b; padding-top: 10px;'>{row_idx}</div>", unsafe_allow_html=True)
         with tr_col1:
-          op_style = "opacity: 1;" if cur_sel else "opacity: 0.55; text-decoration: line-through;"
+          cur_sel = bool(st.session_state[mat_key][inm].get("selected", True))
+          op_style = "opacity: 1;" if cur_sel else "opacity: 0.5; filter: grayscale(70%);"
+
+          if inm in CORE_PROTEIN_ITEMS:
+            rule_badge = '<span style="background: #e0e7ff; color: #3730a3; padding: 1px 6px; border-radius: 4px; font-weight: 600; font-size: 11px;">🔗 ស្បៀងគោល (ធិក១=ទាំងអស់)</span>'
+          elif inm in CORE_VEG_ITEMS:
+            rule_badge = '<span style="background: #dcfce7; color: #166534; padding: 1px 6px; border-radius: 4px; font-weight: 600; font-size: 11px;">🔗 បន្លែគោល (ធិក១=ទាំងអស់)</span>'
+          elif inm in INDEPENDENT_COMMODITIES:
+            rule_badge = f'<span style="background: #fef3c7; color: #92400e; padding: 1px 6px; border-radius: 4px; font-weight: 600; font-size: 11px;">🍚 {cat} (អាស្រ័យជ្រើសរើស)</span>'
+          else:
+            rule_badge = f'<span style="background: #f1f5f9; color: #475569; padding: 1px 6px; border-radius: 4px; font-weight: 600; font-size: 11px;">✨ {grp} (ជ្រើសតាមចិត្ត)</span>'
+
           st.markdown(f"""
           <div style="{op_style} padding-top: 4px;">
             <span style="font-weight: 700; font-size: 14.5px; color: #0f172a;">{inm}</span>
             <span style="font-size: 12px; color: #64748b;">({unit})</span>
-            <div style="font-size: 11px; color: #475569; margin-top: 2px;">
-              <span style="background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-weight: 600; color: #334155;">{grp}</span>
-              <span style="background: #f8fafc; padding: 1px 6px; border-radius: 4px; color: #64748b; margin-left: 3px;">{cat}</span>
+            <div style="font-size: 11px; margin-top: 3px;">
+              {rule_badge}
               &nbsp;|&nbsp; 🏷️ គោល: <b>{format_riel(base_p)}</b>
             </div>
           </div>
@@ -5364,11 +5444,13 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
           </div>
           """, unsafe_allow_html=True)
         with tr_col5:
-          chk_lbl = "☑️ ជ្រើសយក" if cur_sel else "❌ មិនយក"
+          chk_k = f"chk_status_{mat_key}_{inm}"
+          # Check box តែមួយ: បើធីកគឺជ្រើសយក បើអត់គឺមិនយក
           is_chosen = st.checkbox(
-              chk_lbl,
-              value=cur_sel,
-              key=f"chk_status_{mat_key}_{inm}"
+              "ជ្រើសយក",
+              key=chk_k,
+              on_change=on_toggle_supplier_product,
+              args=(inm, mat_key)
           )
           st.session_state[mat_key][inm]["selected"] = is_chosen
 
@@ -5390,6 +5472,7 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
             "p2": float(it["default_p2"]),
             "selected": True
         }
+        st.session_state[f"chk_status_{mat_key}_{inm}"] = True
       st.success("✅ បានកំណត់តម្លៃទំនិញទាំងអស់មកតាមតម្លៃគោលលំនាំដើមវិញ!")
       st.rerun()
 
