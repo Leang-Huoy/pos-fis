@@ -8061,37 +8061,250 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
     if st.button("🔄 Refresh", key="btn_ref_user_page", use_container_width=True, help="Refresh ទំព័រអ្នកប្រើប្រាស់"):
       st.rerun()
 
-  if user_info.get("role") != "Admin":
-    st.error("មានតែ Admin ទេដែលអាចចូលផ្នែកនេះបាន!")
+  current_role = str(user_info.get("role", "")).strip().lower()
+  is_admin = (current_role == "admin")
+
+  if not is_admin:
+    st.error("⛔ **កម្រិតសិទ្ធិចូលប្រើប្រាស់ (Access Restricted)**: មានតែគណនីកម្រិត **Admin** ប៉ុណ្ណោះដែលអាចចូលមកកាន់ផ្នែកគ្រប់គ្រងអ្នកប្រើប្រាស់បាន!")
+    st.info(f"👤 គណនីបច្ចុប្បន្នរបស់អ្នក៖ **{user_info.get('name', 'User')}** (`{user_info.get('username', '')}`) — តួនាទី: **{user_info.get('role', 'Staff')}**")
+
+    with st.expander("🔐 ផ្ទៀងផ្ទាត់ និងប្តូរចូលគណនី Admin (Switch to Admin Account)", expanded=True):
+      st.markdown("ប្រសិនបើអ្នកមានគណនីកម្រិត Admin សូមបញ្ចូលឈ្មោះគណនី និងពាក្យសម្ងាត់ខាងក្រោមដើម្បីបន្ត៖")
+      with st.form("quick_admin_login_form"):
+        qa_user = st.text_input("ឈ្មោះគណនី Admin (Username)", key="qa_user")
+        qa_pass = st.text_input("ពាក្យសម្ងាត់ (Password)", type="password", key="qa_pass")
+        submit_qa = st.form_submit_button("🔓 ចូលប្រព័ន្ធជា Admin", use_container_width=True)
+        if submit_qa:
+          if qa_user and qa_pass:
+            hp = hash_password(qa_pass)
+            adm_row = cursor.execute(
+                "SELECT id, username, full_name, role FROM users WHERE username=? AND password=?",
+                (qa_user, hp)
+            ).fetchone()
+            if adm_row and str(adm_row[3]).strip().lower() == "admin":
+              st.session_state["logged_in"] = True
+              st.session_state["user_info"] = {
+                  "id": adm_row[0],
+                  "username": adm_row[1],
+                  "name": adm_row[2],
+                  "role": adm_row[3],
+              }
+              st.success("✅ បានផ្ទៀងផ្ទាត់ជា Admin ជោគជ័យ! កំពុងផ្ទុកទំព័រឡើងវិញ...")
+              st.rerun()
+            else:
+              st.error("❌ គណនី ឬពាក្យសម្ងាត់មិនត្រឹមត្រូវ ឬមិនមែនជាគណនី Admin ទេ!")
+          else:
+            st.warning("⚠️ សូមបញ្ចូលឈ្មោះគណនី និងពាក្យសម្ងាត់!")
   else:
-    with st.form("new_user_form"):
-      st.subheader("បង្កើតគណនីថ្មី")
-      new_u = st.text_input("ឈ្មោះគណនី (Username)")
-      new_p = st.text_input("ពាក្យសម្ងាត់", type="password")
-      new_fn = st.text_input("ឈ្មោះពេញ")
-      new_r = st.selectbox("តួនាទី", ["Staff", "Admin"])
+    cursor.execute("SELECT id, username, full_name, role FROM users ORDER BY id ASC")
+    all_users = cursor.fetchall()
 
-      if st.form_submit_button("បង្កើតគណនី"):
-        if new_u and new_p:
-          try:
-            cursor.execute(
-                "INSERT INTO users (username, password, full_name, role) VALUES"
-                " (?,?,?,?)",
-                (new_u, hash_password(new_p), new_fn, new_r),
+    total_u = len(all_users)
+    total_adm = sum(1 for u in all_users if str(u[3]).strip().lower() == "admin")
+    total_stf = total_u - total_adm
+
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+      st.metric("👥 គណនីសរុប", f"{total_u} នាក់")
+    with m2:
+      st.metric("🛡️ គណនី Admin", f"{total_adm} នាក់")
+    with m3:
+      st.metric("👤 គណនី Staff", f"{total_stf} នាក់")
+    with m4:
+      st.metric("🔑 កំពុង Login", f"@{user_info.get('username')}")
+
+    st.markdown("---")
+
+    tab_manage, tab_create = st.tabs([
+        "📋 បញ្ជីគណនី & ប្រតិបត្តិការ (ពិនិត្យ / កែប្រែ / លុប)",
+        "➕ បង្កើតគណនីថ្មី (Create New User)"
+    ])
+
+    with tab_manage:
+      st.subheader("📋 បញ្ជីគណនីអ្នកប្រើប្រាស់ទាំងអស់ក្នុងប្រព័ន្ធ")
+
+      df_display = pd.DataFrame([
+          {
+              "ID": u[0],
+              "ឈ្មោះគណនី (Username)": u[1],
+              "ឈ្មោះពេញ": u[2],
+              "តួនាទី": u[3],
+              "ស្ថានភាពសិទ្ធិ": "🛡️ Admin (គ្រប់គ្រងពេញលេញ)" if str(u[3]).strip().lower() == "admin" else "👤 Staff (បុគ្គលិកប្រតិបត្តិការ)"
+          }
+          for u in all_users
+      ])
+      st.dataframe(add_row_numbers(df_display), use_container_width=True, hide_index=True)
+
+      st.markdown("---")
+      st.subheader("⚙️ ជ្រើសរើសគណនីសម្រាប់ប្រតិបត្តិការ (ពិនិត្យ 👁️ / កែប្រែ ✏️ / លុប 🗑️)")
+
+      user_dict = {u[0]: u for u in all_users}
+      user_ids = [u[0] for u in all_users]
+
+      def format_user_label(uid):
+        u = user_dict.get(uid)
+        if not u:
+          return str(uid)
+        tag = "🛡️ Admin" if str(u[3]).strip().lower() == "admin" else "👤 Staff"
+        curr = " (គណនីបច្ចុប្បន្នរបស់អ្នក)" if u[1] == user_info.get("username") else ""
+        return f"{tag} | @{u[1]} — {u[2]}{curr}"
+
+      selected_user_id = st.selectbox(
+          "🎯 សូមជ្រើសរើសគណនីគោលដៅ៖",
+          options=user_ids,
+          format_func=format_user_label,
+          key="sel_target_user"
+      )
+
+      if selected_user_id and selected_user_id in user_dict:
+        target_user = user_dict[selected_user_id]
+        t_id, t_username, t_fullname, t_role = target_user
+        is_current_login = (t_username == user_info.get("username"))
+        target_is_admin = (str(t_role).strip().lower() == "admin")
+
+        act_tab_view, act_tab_edit, act_tab_del = st.tabs([
+            "👁️ ១. ពិនិត្យព័ត៌មានគណនី (View Details)",
+            "✏️ ២. កែប្រែព័ត៌មាន (Edit User)",
+            "🗑️ ៣. លុបគណនី (Delete User)"
+        ])
+
+        with act_tab_view:
+          st.markdown(f"#### 🔍 ព័ត៌មានលម្អិតនៃគណនី: `@{t_username}`")
+          with st.container(border=True):
+            vcol1, vcol2 = st.columns(2)
+            with vcol1:
+              st.markdown(f"**លេខសម្គាល់គណនី (User ID):** `#{t_id}`")
+              st.markdown(f"**ឈ្មោះគណនី (Username):** `{t_username}`")
+              st.markdown(f"**ឈ្មោះពេញ (Full Name):** **{t_fullname or 'គ្មាន'}**")
+            with vcol2:
+              role_badge = "🛡️ **Admin** (សិទ្ធិអ្នកគ្រប់គ្រងប្រព័ន្ធ)" if target_is_admin else "👤 **Staff** (សិទ្ធិបុគ្គលិកទូទៅ)"
+              st.markdown(f"**តួនាទីក្នុងប្រព័ន្ធ (Role):** {role_badge}")
+              st.markdown(f"**ប្រព័ន្ធសុវត្ថិភាពពាក្យសម្ងាត់:** `🔒 SHA-256 Encrypted Hash`")
+              if is_current_login:
+                st.markdown("**ស្ថានភាពប្រើប្រាស់:** 🟢 *ជាគណនីដែលកំពុង Login បច្ចុប្បន្ន*")
+              else:
+                st.markdown("**ស្ថានភាពប្រើប្រាស់:** ⚪ *គណនីធម្មតា*")
+
+            st.markdown("---")
+            st.markdown("**🔑 សិទ្ធិប្រើប្រាស់លើប្រព័ន្ធ (System Permissions):**")
+            if target_is_admin:
+              st.info(
+                  "🛡️ **កម្រិត Admin ទទួលបានសិទ្ធិពេញលេញលើប្រព័ន្ធទាំងមូល រួមមាន៖**\n"
+                  "- បង្កើត, កែប្រែ, និងលុបគណនីអ្នកប្រើប្រាស់\n"
+                  "- កំណត់ថ្លៃទំនិញគោល និងគ្រប់គ្រងបញ្ជីទំនិញ\n"
+                  "- គ្រប់គ្រងអ្នកផ្គត់ផ្គង់ និងការវាយតម្លៃផ្គត់ផ្គង់\n"
+                  "- គ្រប់គ្រងទីតាំង និងសាលារៀន\n"
+                  "- គ្រប់គ្រងកិច្ចសន្យា, វិក្កយបត្រ, សំណើទូទាត់, និងរបាយការណ៍ហិរញ្ញវត្ថុ"
+              )
+            else:
+              st.success(
+                  "👤 **កម្រិត Staff ទទួលបានសិទ្ធិប្រតិបត្តិការទូទៅ រួមមាន៖**\n"
+                  "- បញ្ចូល និងពិនិត្យកិច្ចសន្យា\n"
+                  "- បង្កើត និងគ្រប់គ្រងវិក្កយបត្រ និងសំណើទូទាត់\n"
+                  "- មើលព័ត៌មានទំនិញ, សាលារៀន, និងអ្នកផ្គត់ផ្គង់\n"
+                  "- *(មិនមានសិទ្ធិចូលទំព័រគ្រប់គ្រងអ្នកប្រើប្រាស់នេះឡើយ)*"
+              )
+
+        with act_tab_edit:
+          st.markdown(f"#### ✏️ កែប្រែព័ត៌មានគណនី: `@{t_username}`")
+          with st.form(f"form_edit_user_{t_id}"):
+            st.text_input("ឈ្មោះគណនី (Username - មិនអាចកែប្រែបាន)", value=t_username, disabled=True)
+            edit_fn = st.text_input("ឈ្មោះពេញ (Full Name)", value=t_fullname or "")
+
+            edit_role = st.selectbox("តួនាទី (Role)", options=["Staff", "Admin"], index=1 if target_is_admin else 0)
+
+            st.caption("🔑 **ប្តូរពាក្យសម្ងាត់ថ្មី (ប្រសិនបើមិនចង់ប្តូរ សូមទុកប្រអប់ខាងក្រោមទទេ)**")
+            edit_pwd = st.text_input("ពាក្យសម្ងាត់ថ្មី (New Password)", type="password", key=f"edit_pwd_{t_id}")
+            edit_pwd_confirm = st.text_input("ផ្ទៀងផ្ទាត់ពាក្យសម្ងាត់ថ្មី (Confirm New Password)", type="password", key=f"edit_pwd_c_{t_id}")
+
+            submitted_edit = st.form_submit_button("💾 រក្សាទុកការកែប្រែ (Save Changes)", use_container_width=True)
+            if submitted_edit:
+              if target_is_admin and edit_role != "Admin" and total_adm <= 1:
+                st.error("⚠️ មិនអាចប្តូរតួនាទីគណនីនេះទៅជា Staff បានទេ ព្រោះប្រព័ន្ធត្រូវមាន Admin យ៉ាងហោចណាស់ម្នាក់!")
+              elif edit_pwd and edit_pwd != edit_pwd_confirm:
+                st.error("❌ ពាក្យសម្ងាត់ថ្មីទាំងពីរមិនដូចគ្នាទេ! សូមផ្ទៀងផ្ទាត់ឡើងវិញ។")
+              else:
+                try:
+                  if edit_pwd:
+                    hp = hash_password(edit_pwd)
+                    cursor.execute(
+                        "UPDATE users SET full_name=?, role=?, password=? WHERE id=?",
+                        (edit_fn.strip(), edit_role, hp, t_id)
+                    )
+                  else:
+                    cursor.execute(
+                        "UPDATE users SET full_name=?, role=? WHERE id=?",
+                        (edit_fn.strip(), edit_role, t_id)
+                    )
+                  conn.commit()
+
+                  if is_current_login:
+                    st.session_state["user_info"]["name"] = edit_fn.strip()
+                    st.session_state["user_info"]["role"] = edit_role
+
+                  st.success(f"✅ បានកែប្រែព័ត៌មានគណនី `@{t_username}` ដោយជោគជ័យ!")
+                  st.rerun()
+                except Exception as e:
+                  st.error(f"❌ មានបញ្ហាក្នុងការកែប្រែ៖ {e}")
+
+        with act_tab_del:
+          st.markdown(f"#### 🗑️ លុបគណនីអ្នកប្រើប្រាស់: `@{t_username}`")
+
+          if is_current_login:
+            st.warning("⚠️ **មិនអាចលុបគណនីបានទេ៖** នេះជាគណនីដែលលោកអ្នកកំពុង Login ប្រើប្រាស់បច្ចុប្បន្ន!")
+          elif target_is_admin and total_adm <= 1:
+            st.error("⚠️ **មិនអាចលុបគណនីបានទេ៖** គណនីនេះជា Admin តែមួយគត់ក្នុងប្រព័ន្ធ។ ប្រព័ន្ធត្រូវតែមាន Admin យ៉ាងហោចណាស់ម្នាក់ជានិច្ច!")
+          else:
+            st.error(f"⚠️ **ការព្រមាន៖** សកម្មភាពនេះនឹងលុបគណនី `@{t_username}` ({t_fullname}) ចេញពីប្រព័ន្ធជាអចិន្ត្រៃយ៍ និងមិនអាចទាញយកមកវិញបានឡើយ!")
+            confirm_del = st.checkbox(
+                f"ខ្ញុំយល់ព្រម និងបញ្ជាក់ការលុបគណនី @{t_username} ចេញពីប្រព័ន្ធ",
+                key=f"chk_del_{t_id}"
             )
-            conn.commit()
-            st.success("បានបង្កើតគណនីថ្មីដោយជោគជ័យ!")
-          except sqlite3.IntegrityError:
-            st.error("ឈ្មោះគណនីនេះមានរួចហើយ!")
-        else:
-          st.warning("សូមបំពេញឈ្មោះគណនី និងពាក្យសម្ងាត់!")
+            btn_del = st.button(
+                f"🗑️ បញ្ជាក់ការលុបគណនី @{t_username}",
+                type="primary",
+                disabled=not confirm_del,
+                key=f"btn_confirm_del_{t_id}"
+            )
+            if btn_del:
+              try:
+                cursor.execute("DELETE FROM users WHERE id=?", (t_id,))
+                conn.commit()
+                st.success(f"🗑️ បានលុបគណនី `@{t_username}` ចេញពីប្រព័ន្ធដោយជោគជ័យ!")
+                st.rerun()
+              except Exception as e:
+                st.error(f"❌ មានបញ្ហាក្នុងការលុប៖ {e}")
 
-    st.subheader("បញ្ជីគណនីទាំងអស់")
-    df_users = pd.read_sql_query(
-        "SELECT username as [គណនី], full_name as [ឈ្មោះពេញ], role as [តួនាទី] FROM"
-        " users",
-        conn,
-    )
-    st.dataframe(
-        add_row_numbers(df_users), use_container_width=True, hide_index=True
-    )
+    with tab_create:
+      st.subheader("➕ បង្កើតគណនីអ្នកប្រើប្រាស់ថ្មី")
+      with st.form("new_user_form_v2"):
+        c1, c2 = st.columns(2)
+        with c1:
+          new_u = st.text_input("ឈ្មោះគណនី (Username) *", placeholder="ឧ. somnang, dara_pos")
+          new_fn = st.text_input("ឈ្មោះពេញ (Full Name) *", placeholder="ឧ. សុខ សំណាង")
+          new_r = st.selectbox("តួនាទី (Role) *", ["Staff", "Admin"], index=0)
+        with c2:
+          new_p = st.text_input("ពាក្យសម្ងាត់ (Password) *", type="password")
+          new_pc = st.text_input("បញ្ជាក់ពាក្យសម្ងាត់ (Confirm Password) *", type="password")
+          st.caption("ℹ️ Admin មានសិទ្ធិគ្រប់គ្រងប្រព័ន្ធទាំងអស់ រីឯ Staff មានសិទ្ធិប្រតិបត្តិការទូទៅ។")
+
+        submit_new = st.form_submit_button("➕ បង្កើតគណនីថ្មី", use_container_width=True)
+        if submit_new:
+          if not new_u or not new_p:
+            st.warning("⚠️ សូមបំពេញឈ្មោះគណនី និងពាក្យសម្ងាត់!")
+          elif new_p != new_pc:
+            st.error("❌ ពាក្យសម្ងាត់ និងការបញ្ជាក់ពាក្យសម្ងាត់មិនដូចគ្នាទេ!")
+          else:
+            try:
+              cursor.execute(
+                  "INSERT INTO users (username, password, full_name, role) VALUES (?,?,?,?)",
+                  (new_u.strip(), hash_password(new_p), new_fn.strip(), new_r),
+              )
+              conn.commit()
+              st.success(f"✅ បានបង្កើតគណនី `@{new_u.strip()}` ដោយជោគជ័យ!")
+              st.rerun()
+            except sqlite3.IntegrityError:
+              st.error("❌ ឈ្មោះគណនីនេះមានរួចហើយក្នុងប្រព័ន្ធ! សូមជ្រើសរើសឈ្មោះគណនីផ្សេង។")
+            except Exception as e:
+              st.error(f"❌ មានបញ្ហាក្នុងការបង្កើតគណនី៖ {e}")
+
