@@ -559,6 +559,218 @@ def file_to_base64_img(uploaded_file):
     return None
 
 
+def process_signature_image(
+    image_input,
+    remove_bg: bool = True,
+    threshold: int = 215,
+    softness: int = 40,
+    recolor_choice: str = "blue",
+    custom_hex: str = "#0B3C95",
+    contrast_boost: float = 1.2
+) -> str:
+  """
+  បម្លែងរូបភាពហត្ថលេខា/ត្រា៖
+  1. ✨ Remove Background: លុបផ្ទៃក្រដាសស ឬស្រអាប់ចេញឱ្យថ្លា (Transparent PNG)
+  2. 🎨 Recolor: កែប្រែពណ៌ទឹកប៊ិច (ខៀវផ្លូវការ, ខ្មៅដិត, ត្រាក្រហម, ឬពណ៌តាមចិត្ត)
+  3. ✂️ Auto-Crop: កាត់គែមទទេជុំវិញចេញឱ្យល្មមស្អាត
+  4. 📦 Return: Data URL Base64 ('data:image/png;base64,...')
+  """
+  if image_input is None:
+    return None
+  try:
+    import io
+    import base64
+    from PIL import Image
+    import numpy as np
+
+    # ១. អានរូបភាពចូលជា PIL Image
+    if isinstance(image_input, str):
+      if image_input.startswith("data:image"):
+        raw_b64 = image_input.split(",", 1)[1]
+        img_bytes = base64.b64decode(raw_b64)
+        img = Image.open(io.BytesIO(img_bytes))
+      else:
+        return image_input
+    elif hasattr(image_input, "getvalue"):
+      img = Image.open(io.BytesIO(image_input.getvalue()))
+    elif isinstance(image_input, bytes):
+      img = Image.open(io.BytesIO(image_input))
+    elif isinstance(image_input, Image.Image):
+      img = image_input
+    else:
+      return None
+
+    # បម្លែងជា RGBA
+    img = img.convert("RGBA")
+    arr = np.array(img, dtype=np.float32)
+    r, g, b, a = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2], arr[:, :, 3]
+
+    # គណនាពន្លឺ (Luminance) របស់ pixel
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+
+    # ២. លុបផ្ទៃខាងក្រោយ (Remove Background)
+    if remove_bg:
+      t_high = float(threshold)
+      t_low = max(0.0, t_high - float(softness))
+      denom = max(1.0, t_high - t_low)
+      # ផ្ទៃក្រដាស (lum >= t_high) => alpha 0; ស្នាមប៊ិច (lum <= t_low) => alpha 255
+      alpha_bg = np.clip((t_high - lum) / denom * 255.0, 0.0, 255.0)
+      final_alpha = np.minimum(a, alpha_bg)
+    else:
+      final_alpha = a
+
+    # ៣. កែប្រែពណ៌ទឹកប៊ិច (Recolor)
+    palette = {
+        "blue": (11, 60, 149),     # #0B3C95 Official Royal Blue
+        "black": (17, 24, 39),     # #111827 Deep Black
+        "red": (220, 38, 38)       # #DC2626 Official Stamp Red
+    }
+
+    if recolor_choice in palette:
+      tr, tg, tb = palette[recolor_choice]
+      out_r = np.full_like(r, tr)
+      out_g = np.full_like(g, tg)
+      out_b = np.full_like(b, tb)
+    elif recolor_choice == "custom":
+      c = str(custom_hex).lstrip("#")
+      if len(c) == 6:
+        tr, tg, tb = tuple(int(c[i:i+2], 16) for i in (0, 2, 4))
+      else:
+        tr, tg, tb = (11, 60, 149)
+      out_r = np.full_like(r, tr)
+      out_g = np.full_like(g, tg)
+      out_b = np.full_like(b, tb)
+    else:  # "keep" ពណ៌ដើម
+      out_r = np.clip(r * contrast_boost, 0.0, 255.0)
+      out_g = np.clip(g * contrast_boost, 0.0, 255.0)
+      out_b = np.clip(b * contrast_boost, 0.0, 255.0)
+
+    # ផ្គុំរូបភាពឡើងវិញ
+    out_arr = np.dstack([out_r, out_g, out_b, final_alpha]).astype(np.uint8)
+    out_img = Image.fromarray(out_arr, mode="RGBA")
+
+    # ៤. កាត់គែមទទេ (Auto-crop transparent bounding box)
+    bbox = out_img.getbbox()
+    if bbox:
+      w, h = out_img.size
+      box = (max(0, bbox[0] - 6), max(0, bbox[1] - 6), min(w, bbox[2] + 6), min(h, bbox[3] + 6))
+      out_img = out_img.crop(box)
+
+    # រក្សាទុកជា Base64 PNG
+    buf = io.BytesIO()
+    out_img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
+  except Exception as e:
+    return None
+
+
+def render_signature_uploader_with_tools(
+    label: str,
+    key_prefix: str,
+    default_sig_b64=None,
+    allow_use_saved: bool = False,
+    saved_sig_b64=None,
+    allow_blank_choice: bool = True,
+    default_blank: bool = False,
+    default_recolor: str = "blue"
+):
+  """
+  Component បង្ហាញ UI សម្រាប់ Upload ហត្ថលេខា ជាមួយមុខងារ៖
+  - 📤 File uploader
+  - ✨ Remove background (លុបផ្ទៃខាងក្រោយ ថ្លា)
+  - 🎨 Recolor ទឹកប៊ិច (ខៀវផ្លូវការ, ខ្មៅ, ក្រហម, ពណ៌តាមចិត្ត, ពណ៌ដើម)
+  - 🎚️ Slider កម្រិតសម្អាតក្រដាសស
+  - 👁️ Live preview
+  """
+  st.markdown(f"**{label}**")
+
+  use_saved = False
+  if allow_use_saved and saved_sig_b64 and str(saved_sig_b64).startswith("data:image"):
+    use_saved = st.checkbox("ប្រើហត្ថលេខាដែលបានរក្សាទុក", value=True, key=f"{key_prefix}_chk_saved")
+
+  up_file = st.file_uploader(
+      "📤 បញ្ចូលរូបភាព (PNG/JPG/WebP)",
+      type=["png", "jpg", "jpeg", "webp"],
+      key=f"{key_prefix}_up_file",
+      help="អាចបញ្ចូលរូបថតហត្ថលេខាលើក្រដាស ប្រព័ន្ធនឹងលុបផ្ទៃស និងកែពណ៌ស្វ័យប្រវត្តិ"
+  )
+
+  is_blank = False
+  if allow_blank_choice:
+    is_blank = st.checkbox("ទុកចន្លោះចុចៗ (.........) ស៊ីញ៉េដៃ", value=default_blank, key=f"{key_prefix}_blank")
+
+  if is_blank:
+    st.caption("ℹ️ បង្ហាញបន្ទាត់ចុចៗ ................. សម្រាប់ចុះហត្ថលេខាផ្ទាល់ដៃ")
+    return None
+
+  # កំណត់ប្រភពរូបភាព (Source Image)
+  source_img = None
+  if up_file is not None:
+    source_img = up_file
+  elif use_saved and saved_sig_b64:
+    source_img = saved_sig_b64
+  elif default_sig_b64:
+    source_img = default_sig_b64
+
+  if source_img is None:
+    st.caption("ℹ️ បង្ហាញបន្ទាត់ចុចៗ ................. សម្រាប់ចុះហត្ថលេខាផ្ទាល់ដៃ")
+    return None
+
+  # បង្ហាញឧបករណ៍កែសម្រួល (Remove Background & Recolor)
+  with st.expander("🛠️ ឧបករណ៍លុបផ្ទៃក្រោយ & កែប្រែពណ៌ហត្ថលេខា", expanded=(up_file is not None)):
+    c1, c2 = st.columns(2)
+    with c1:
+      rm_bg = st.checkbox(
+          "✨ លុបផ្ទៃខាងក្រោយ (ថ្លា)",
+          value=True,
+          key=f"{key_prefix}_rm_bg",
+          help="លុបផ្ទៃក្រដាសស ឬស្រអាប់ចេញឱ្យថ្លា (Transparent)"
+      )
+      thresh = 215
+      if rm_bg:
+        thresh = st.slider(
+            "កម្រិតសម្អាតក្រដាសស",
+            min_value=140,
+            max_value=250,
+            value=215,
+            step=5,
+            key=f"{key_prefix}_thresh",
+            help="លេខកាន់តែធំ សម្អាតផ្ទៃសកាន់តែជ្រៅ"
+        )
+    with c2:
+      color_mode = st.selectbox(
+          "🎨 ពណ៌ទឹកប៊ិច / ត្រា",
+          options=["blue", "black", "red", "keep", "custom"],
+          index=0 if default_recolor == "blue" else (2 if default_recolor == "red" else 1),
+          format_func=lambda x: {
+              "blue": "🔵 ទឹកប៊ិចខៀវ (ផ្លូវការ)",
+              "black": "⚫ ទឹកប៊ិចខ្មៅដិត",
+              "red": "🔴 ត្រាក្រហម / ប៊ិចក្រហម",
+              "keep": "🔄 រក្សាពណ៌ដើម",
+              "custom": "🎨 ជ្រើសរើសពណ៌តាមចិត្ត..."
+          }.get(x, x),
+          key=f"{key_prefix}_col_mode"
+      )
+      custom_hex = "#0B3C95"
+      if color_mode == "custom":
+        custom_hex = st.color_picker("ជ្រើសរើសពណ៌", value="#0B3C95", key=f"{key_prefix}_custom_hex")
+
+  processed_sig = process_signature_image(
+      source_img,
+      remove_bg=rm_bg,
+      threshold=thresh,
+      recolor_choice=color_mode,
+      custom_hex=custom_hex
+  )
+
+  if processed_sig:
+    st.image(processed_sig, width=135, caption="✅ ហត្ថលេខាសកម្ម (ផ្ទៃថ្លា & ពណ៌ស្អាត)")
+    return processed_sig
+
+  return None
+
+
 def format_supplier_address(sup_dict):
   """រៀបចំអាសយដ្ឋានអ្នកផ្គត់ផ្គង់ជាទម្រង់អានស្រួល: ភូមិ... ឃុំ... ស្រុក... ខេត្ត..."""
   if not sup_dict:
@@ -3649,14 +3861,13 @@ elif menu == "🚚 គ្រប់គ្រងអ្នកផ្គត់ផ្�
       new_sup_vill = st.text_input("ភូមិ", value="ភូមិខ្មែរ", key="new_sup_vill").strip()
 
     st.markdown("##### ✍️ ហត្ថលេខាអ្នកផ្គត់ផ្គង់ (សម្រាប់ប្រើក្នុងវិក្កយបត្រ និងសំណើទូទាត់):")
-    st.info("💡 អាចបញ្ចូលរូបភាពហត្ថលេខាដែលមានផ្ទៃខាងក្រោយថ្លា (Transparent PNG/JPG) ឬទុកឱ្យនៅទំនេរសម្រាប់ចុះហត្ថលេខាផ្ទាល់ដៃលើក្រដាស។")
-    new_sup_sig_file = st.file_uploader("បញ្ចូលរូបភាពហត្ថលេខា (PNG, JPG, WebP)", type=["png", "jpg", "jpeg", "webp"], key="new_sup_sig_file")
-    new_sig_b64 = ""
-    if new_sup_sig_file:
-      import base64
-      b64_str = base64.b64encode(new_sup_sig_file.getvalue()).decode('utf-8')
-      new_sig_b64 = f"data:{new_sup_sig_file.type};base64,{b64_str}"
-      st.image(new_sup_sig_file, width=130, caption="គំរូរូបភាពហត្ថលេខាដែលបានបញ្ចូល")
+    st.info("💡 អាចបញ្ចូលរូបថត ឬរូបភាពហត្ថលេខា។ ប្រព័ន្ធនឹងលុបផ្ទៃខាងក្រោយ និងប្តូរពណ៌ទឹកប៊ិចដោយស្វ័យប្រវត្តិ។")
+    new_sig_b64 = render_signature_uploader_with_tools(
+        label="បញ្ចូលរូបភាពហត្ថលេខាអ្នកផ្គត់ផ្គង់",
+        key_prefix="new_sup_sig_form",
+        allow_blank_choice=False,
+        default_recolor="blue"
+    ) or ""
 
     if st.button("➕ រក្សាទុកអ្នកផ្គត់ផ្គង់ថ្មី", key="btn_save_new_sup", use_container_width=True):
       if not add_sup_school:
@@ -3743,12 +3954,14 @@ elif menu == "🚚 គ្រប់គ្រងអ្នកផ្គត់ផ្�
             st.rerun()
 
         with st.expander("📤 ផ្លាស់ប្ដូររូបភាពហត្ថលេខាថ្មីសម្រាប់អ្នកផ្គត់ផ្គង់នេះ"):
-          up_new_sig = st.file_uploader("បញ្ចូលរូបភាពហត្ថលេខាថ្មី", type=["png", "jpg", "jpeg", "webp"], key=f"up_newsig_{chosen_sup_id}")
-          if up_new_sig and st.button("💾 រក្សាទុករូបភាពហត្ថលេខាថ្មី", key=f"btn_save_newsig_{chosen_sup_id}"):
-            import base64
-            b64_str = base64.b64encode(up_new_sig.getvalue()).decode('utf-8')
-            new_sig_data = f"data:{up_new_sig.type};base64,{b64_str}"
-            cursor.execute("UPDATE suppliers SET signature_data=? WHERE id=?", (new_sig_data, chosen_sup_id))
+          new_edit_sig_data = render_signature_uploader_with_tools(
+              label="បញ្ចូលរូបភាពហត្ថលេខាថ្មី",
+              key_prefix=f"edit_sup_sig_{chosen_sup_id}",
+              allow_blank_choice=False,
+              default_recolor="blue"
+          )
+          if new_edit_sig_data and st.button("💾 រក្សាទុករូបភាពហត្ថលេខាថ្មី", key=f"btn_save_newsig_{chosen_sup_id}"):
+            cursor.execute("UPDATE suppliers SET signature_data=? WHERE id=?", (new_edit_sig_data, chosen_sup_id))
             conn.commit()
             st.success("🎉 បានធ្វើបច្ចុប្បន្នភាពហត្ថលេខាថ្មីជោគជ័យ!")
             st.rerun()
@@ -4721,43 +4934,35 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
       s_col1, s_col2, s_col3 = st.columns(3)
 
       with s_col1:
-        st.markdown("**១. ហត្ថលេខាអ្នកផ្គត់ផ្គង់ (អ្នកប្រគល់)**")
-        use_saved_sig = False
-        if saved_sup_sig and str(saved_sup_sig).startswith("data:image"):
-          use_saved_sig = st.checkbox("ប្រើហត្ថលេខាអ្នកផ្គត់ផ្គង់ដែលបានរក្សាទុក", value=True, key=f"inv_chk_saved_sig_{inv_school}")
-
-        up_sup_sig = st.file_uploader("📤 បញ្ចូលហត្ថលេខាថ្មី (PNG/JPG)", type=["png", "jpg", "jpeg", "webp"], key=f"inv_up_sup_{inv_school}")
-        no_sup_sig = st.checkbox("ទុកចន្លោះចុចៗ (.........) ស៊ីញ៉េដៃ", value=False, key=f"inv_no_sup_{inv_school}")
-
-        active_sup_sig = None
-        if not no_sup_sig:
-          if up_sup_sig is not None:
-            active_sup_sig = file_to_base64_img(up_sup_sig)
-          elif use_saved_sig and saved_sup_sig:
-            active_sup_sig = saved_sup_sig
-
-        if active_sup_sig:
-          st.image(active_sup_sig, width=130, caption="ហត្ថលេខាអ្នកផ្គត់ផ្គង់សកម្ម")
-        else:
-          st.caption("ℹ️ បង្ហាញបន្ទាត់ចុចៗ ................. សម្រាប់ចុះហត្ថលេខាផ្ទាល់ដៃ")
+        active_sup_sig = render_signature_uploader_with_tools(
+            label="១. ហត្ថលេខាអ្នកផ្គត់ផ្គង់ (អ្នកប្រគល់)",
+            key_prefix=f"inv_sup_{inv_school}_{inv_date}",
+            allow_use_saved=True,
+            saved_sig_b64=saved_sup_sig,
+            allow_blank_choice=True,
+            default_blank=False,
+            default_recolor="blue"
+        )
 
       with s_col2:
-        st.markdown("**២. ហត្ថលេខា/ត្រានាយកសាលា (បានឃើញ និងឯកភាព)**")
-        up_dir_sig = st.file_uploader("📤 បញ្ចូលហត្ថលេខា/ត្រានាយក (PNG/JPG)", type=["png", "jpg", "jpeg", "webp"], key=f"inv_up_dir_{inv_school}")
-        active_dir_sig = file_to_base64_img(up_dir_sig) if up_dir_sig is not None else None
-        if active_dir_sig:
-          st.image(active_dir_sig, width=130, caption="ហត្ថលេខា/ត្រានាយកសាលាសកម្ម")
-        else:
-          st.caption("ℹ️ បង្ហាញបន្ទាត់ចុចៗ ................. សម្រាប់ចុះហត្ថលេខាផ្ទាល់ដៃ")
+        active_dir_sig = render_signature_uploader_with_tools(
+            label="២. ហត្ថលេខា/ត្រានាយកសាលា (បានឃើញ និងឯកភាព)",
+            key_prefix=f"inv_dir_{inv_school}_{inv_date}",
+            allow_use_saved=False,
+            allow_blank_choice=True,
+            default_blank=False,
+            default_recolor="red"
+        )
 
       with s_col3:
-        st.markdown("**៣. ហត្ថលេខាអ្នកទទួលស្បៀង (នាយឃ្លាំង/បេឡាធិការ)**")
-        up_rec_sig = st.file_uploader("📤 បញ្ចូលហត្ថលេខាអ្នកទទួល (PNG/JPG)", type=["png", "jpg", "jpeg", "webp"], key=f"inv_up_rec_{inv_school}")
-        active_rec_sig = file_to_base64_img(up_rec_sig) if up_rec_sig is not None else None
-        if active_rec_sig:
-          st.image(active_rec_sig, width=130, caption="ហត្ថលេខាអ្នកទទួលសកម្ម")
-        else:
-          st.caption("ℹ️ បង្ហាញបន្ទាត់ចុចៗ ................. សម្រាប់ចុះហត្ថលេខាផ្ទាល់ដៃ")
+        active_rec_sig = render_signature_uploader_with_tools(
+            label="៣. ហត្ថលេខាអ្នកទទួលស្បៀង (នាយឃ្លាំង/បេឡាធិការ)",
+            key_prefix=f"inv_rec_{inv_school}_{inv_date}",
+            allow_use_saved=False,
+            allow_blank_choice=True,
+            default_blank=False,
+            default_recolor="blue"
+        )
 
     # ទាញយកទំនិញសម្រាប់ថ្ងៃ និងសាលានោះ
     query = """SELECT item_name as [មុខទំនិញ], phase as [វគ្គ], quantity as [បរិមាណ], 
@@ -5281,43 +5486,35 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
     cs_col1, cs_col2, cs_col3 = st.columns(3)
 
     with cs_col1:
-      st.markdown("**១. ហត្ថលេខាអ្នកផ្គត់ផ្គង់ (អ្នកស្នើសុំ)**")
-      use_claim_saved_sig = False
-      if saved_claim_sig and str(saved_claim_sig).startswith("data:image"):
-        use_claim_saved_sig = st.checkbox("ប្រើហត្ថលេខាអ្នកផ្គត់ផ្គង់ដែលបានរក្សាទុក", value=True, key=f"claim_chk_saved_sig_{claim_school}")
-
-      up_claim_sup_sig = st.file_uploader("📤 បញ្ចូលហត្ថលេខាអ្នកផ្គត់ផ្គង់ថ្មី (PNG/JPG)", type=["png", "jpg", "jpeg", "webp"], key=f"claim_up_sup_{claim_school}")
-      no_claim_sup_sig = st.checkbox("ទុកចន្លោះចុចៗ (.........) ស៊ីញ៉េដៃ", value=False, key=f"claim_no_sup_{claim_school}")
-
-      active_claim_sup_sig = None
-      if not no_claim_sup_sig:
-        if up_claim_sup_sig is not None:
-          active_claim_sup_sig = file_to_base64_img(up_claim_sup_sig)
-        elif use_claim_saved_sig and saved_claim_sig:
-          active_claim_sup_sig = saved_claim_sig
-
-      if active_claim_sup_sig:
-        st.image(active_claim_sup_sig, width=130, caption="ហត្ថលេខាអ្នកផ្គត់ផ្គង់សកម្ម")
-      else:
-        st.caption("ℹ️ បង្ហាញបន្ទាត់ចុចៗ ................. សម្រាប់ចុះហត្ថលេខាផ្ទាល់ដៃ")
+      active_claim_sup_sig = render_signature_uploader_with_tools(
+          label="១. ហត្ថលេខាអ្នកផ្គត់ផ្គង់ (អ្នកស្នើសុំ)",
+          key_prefix=f"claim_sup_{claim_school}_{claim_start_date}",
+          allow_use_saved=True,
+          saved_sig_b64=saved_claim_sig,
+          allow_blank_choice=True,
+          default_blank=False,
+          default_recolor="blue"
+      )
 
     with cs_col2:
-      st.markdown("**២. ហត្ថលេខា/ត្រានាយកសាលា (បានឃើញ និងឯកភាព)**")
-      up_claim_dir_sig = st.file_uploader("📤 បញ្ចូលហត្ថលេខា/ត្រានាយក (PNG/JPG)", type=["png", "jpg", "jpeg", "webp"], key=f"claim_up_dir_{claim_school}")
-      active_claim_dir_sig = file_to_base64_img(up_claim_dir_sig) if up_claim_dir_sig is not None else None
-      if active_claim_dir_sig:
-        st.image(active_claim_dir_sig, width=130, caption="ហត្ថលេខា/ត្រានាយកសាលាសកម្ម")
-      else:
-        st.caption("ℹ️ បង្ហាញបន្ទាត់ចុចៗ ................. សម្រាប់ចុះហត្ថលេខាផ្ទាល់ដៃ")
+      active_claim_dir_sig = render_signature_uploader_with_tools(
+          label="២. ហត្ថលេខា/ត្រានាយកសាលា (បានឃើញ និងឯកភាព)",
+          key_prefix=f"claim_dir_{claim_school}_{claim_start_date}",
+          allow_use_saved=False,
+          allow_blank_choice=True,
+          default_blank=False,
+          default_recolor="red"
+      )
 
     with cs_col3:
-      st.markdown("**៣. ហត្ថលេខាអ្នកធ្វើតារាង / គណនេយ្យករ**")
-      up_claim_prep_sig = st.file_uploader("📤 បញ្ចូលហត្ថលេខាអ្នកធ្វើតារាង (PNG/JPG)", type=["png", "jpg", "jpeg", "webp"], key=f"claim_up_prep_{claim_school}")
-      active_claim_prep_sig = file_to_base64_img(up_claim_prep_sig) if up_claim_prep_sig is not None else None
-      if active_claim_prep_sig:
-        st.image(active_claim_prep_sig, width=130, caption="ហត្ថលេខាអ្នកធ្វើតារាងសកម្ម")
-      else:
-        st.caption("ℹ️ បង្ហាញបន្ទាត់ចុចៗ ................. សម្រាប់ចុះហត្ថលេខាផ្ទាល់ដៃ")
+      active_claim_prep_sig = render_signature_uploader_with_tools(
+          label="៣. ហត្ថលេខាអ្នកធ្វើតារាង / គណនេយ្យករ",
+          key_prefix=f"claim_prep_{claim_school}_{claim_start_date}",
+          allow_use_saved=False,
+          allow_blank_choice=True,
+          default_blank=False,
+          default_recolor="blue"
+      )
 
   # ៤. ទាញយក និងគ្រប់គ្រងទិន្នន័យមុខទំនិញជាមុន ដើម្បីចាប់យកប្រភេទមុខទំនិញស្វ័យប្រវត្តិ
   session_key = f"claim_items_data_{claim_school}_{claim_start_date}_{claim_end_date}"
