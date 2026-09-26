@@ -27,16 +27,13 @@ conn = sqlite3.connect("school_pos.db", check_same_thread=False)
 cursor = conn.cursor()
 
 
-# មុខងារជំនួយសម្រាប់ទ្រង់ទ្រាយរូបិយប័ណ្ណប្រាក់រៀល (៛)
+# មុខងារជំនួយសម្រាប់ទ្រង់ទ្រាយរូបិយប័ណ្ណប្រាក់រៀល (៛) (គ្មានក្បៀស .00 ដោយប្រើទម្រង់ 7,500 15,800)
 def format_riel(amount):
   if amount is None:
     return "0 ៛"
   try:
-    val = float(amount)
-    if val % 1 == 0:
-      return f"{int(val):,} ៛"
-    else:
-      return f"{val:,.2f} ៛"
+    val = round(float(amount))
+    return f"{int(val):,} ៛"
   except (ValueError, TypeError):
     return f"{amount} ៛"
 
@@ -1827,7 +1824,7 @@ def generate_simple_pdf(title: str, subtitle: str, df: pd.DataFrame) -> bytes:
       if col == "ល.រ" or col == "No.":
         text_val = str(val)
       elif isinstance(val, (int, float)):
-        text_val = f"{int(val):,} ៛" if val % 1 == 0 else f"{val:,.2f} ៛"
+        text_val = f"{int(round(val)):,} ៛"
         if not has_khmer_font:
           text_val = text_val.replace("៛", "Riel")
       else:
@@ -1972,8 +1969,8 @@ def generate_annex3_html(district, commune, school_name, voucher_no, invoice_dat
       tot_amount += i_tot
 
       qty_str = f"{i_qty:g}" if i_qty % 1 != 0 else f"{int(i_qty)}"
-      unit_str = f"{int(i_unit):,} ៛" if i_unit % 1 == 0 else f"{i_unit:,.2f} ៛"
-      tot_str = f"{int(i_tot):,} ៛" if i_tot % 1 == 0 else f"{i_tot:,.2f} ៛"
+      unit_str = f"{int(round(i_unit)):,} ៛"
+      tot_str = f"{int(round(i_tot)):,} ៛"
 
       rows_html += f"""
       <tr>
@@ -1996,7 +1993,7 @@ def generate_annex3_html(district, commune, school_name, voucher_no, invoice_dat
       """
 
   tot_qty_str = f"{tot_qty:g}" if tot_qty % 1 != 0 else f"{int(tot_qty)}"
-  tot_amount_str = f"{int(tot_amount):,} ៛" if tot_amount % 1 == 0 else f"{tot_amount:,.2f} ៛"
+  tot_amount_str = f"{int(round(tot_amount)):,} ៛"
   khmer_date_str = format_khmer_date(invoice_date)
   # បង្ហាញត្រឹមតែកាលបរិច្ឆេទខាងមុខ ដោយលុបពាក្យថ្ងៃដាក់ចេញ
   date_display_str = khmer_date_str
@@ -3111,8 +3108,8 @@ def generate_monthly_claim_html(district, commune, school_name, voucher_no, d_st
 
     total_amount += t_price
     q_str = f"{qty:g}" if qty % 1 != 0 else f"{int(qty)}"
-    u_str = f"{int(u_price):,} ៛" if u_price % 1 == 0 else f"{u_price:,.2f} ៛"
-    t_str = f"{int(t_price):,} ៛" if t_price % 1 == 0 else f"{t_price:,.2f} ៛"
+    u_str = f"{int(round(u_price)):,} ៛"
+    t_str = f"{int(round(t_price)):,} ៛"
 
     rows_html.append(f"""
     <tr>
@@ -3126,8 +3123,8 @@ def generate_monthly_claim_html(district, commune, school_name, voucher_no, d_st
     """)
 
   rounded_amount = round_khmer_currency(total_amount)
-  tot_amt_str = f"{int(total_amount):,} ៛" if total_amount % 1 == 0 else f"{total_amount:,.2f} ៛"
-  rounded_amt_str = f"{int(rounded_amount):,} ៛"
+  tot_amt_str = f"{int(round(total_amount)):,} ៛"
+  rounded_amt_str = f"{int(round(rounded_amount)):,} ៛"
   if voucher_no and str(voucher_no).strip():
     v_display = str(voucher_no).strip()
   elif d_end:
@@ -3933,10 +3930,18 @@ st.sidebar.markdown(f"### 👤 {user_info['name']}")
 st.sidebar.caption(
     f"តួនាទី: **{user_info['role']}** | គណនី: `{user_info['username']}`"
 )
-if st.sidebar.button("🚪 ចាកចេញ (Logout)", use_container_width=True):
-  logout()
+col_sb_ref, col_sb_out = st.sidebar.columns(2)
+with col_sb_ref:
+  if st.button("🔄 Refresh", use_container_width=True, key="btn_sidebar_refresh", help="ចុចដើម្បី Refresh ផ្ទុកទិន្នន័យឡើងវិញ"):
+    st.rerun()
+with col_sb_out:
+  if st.button("🚪 Logout", use_container_width=True, key="btn_sidebar_logout"):
+    logout()
 
 st.sidebar.divider()
+if st.sidebar.button("🔄 ផ្ទុកទិន្នន័យឡើងវិញ (Refresh All)", use_container_width=True, key="btn_sidebar_refresh_full", help="ចុចដើម្បី Refresh ទិន្នន័យទាំងអស់"):
+  st.rerun()
+
 menu = st.sidebar.radio(
     "ជ្រើសរើសផ្នែក៖",
     [
@@ -3954,7 +3959,13 @@ menu = st.sidebar.radio(
 
 # ================= ១. DASHBOARD =================
 if menu == "📊 Dashboard":
-  st.title("📊 ផ្ទាំងគ្រប់គ្រងទូទៅ (Dashboard)")
+  col_d1, col_d2 = st.columns([5, 1])
+  with col_d1:
+    st.title("📊 ផ្ទាំងគ្រប់គ្រងទូទៅ (Dashboard)")
+  with col_d2:
+    st.write("")
+    if st.button("🔄 Refresh", key="btn_ref_dashboard", use_container_width=True, help="Refresh ទំព័រ Dashboard"):
+      st.rerun()
 
   total_sales = (
       cursor.execute("SELECT SUM(total_price) FROM daily_records").fetchone()[0]
@@ -3995,7 +4006,13 @@ if menu == "📊 Dashboard":
 
 # ================= ២. ទីតាំង និងសាលា (មានមុខងារ កែប្រែ, លុប, និង នាំចូលពីក្រៅ) =================
 elif menu == "📍 គ្រប់គ្រងទីតាំង និងសាលារៀន":
-  st.title("📍 គ្រប់គ្រង ភូមិ/ឃុំ/ស្រុក/ខេត្ត និងសាលារៀន")
+  col_s1, col_s2 = st.columns([5, 1])
+  with col_s1:
+    st.title("📍 គ្រប់គ្រង ភូមិ/ឃុំ/ស្រុក/ខេត្ត និងសាលារៀន")
+  with col_s2:
+    st.write("")
+    if st.button("🔄 Refresh", key="btn_ref_loc_sch", use_container_width=True, help="Refresh ទំព័រទីតាំង និងសាលារៀន"):
+      st.rerun()
   tab1, tab2 = st.tabs(["📍 គ្រប់គ្រងទីតាំងរដ្ឋបាល", "🏫 គ្រប់គ្រងសាលារៀន"])
 
   # ----------------- TAB 1: ទីតាំងរដ្ឋបាល -----------------
@@ -4852,7 +4869,13 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
 
 # ================= ៣. បញ្ជីគ្រប់គ្រងអ្នកផ្គត់ផ្គង់ =================
 elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្គត់ផ្គង់", "🚚 គ្រប់គ្រងអ្នកផ្គត់ផ្គង់តាមសាលា", "🚚 គ្រប់គ្រងអ្នកផ្គត់ផ្គង់"]:
-  st.title("🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្គត់ផ្គង់ និងកំណត់តម្លៃទំនិញ")
+  col_sp1, col_sp2 = st.columns([5, 1])
+  with col_sp1:
+    st.title("🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្គត់ផ្គង់ និងកំណត់តម្លៃទំនិញ")
+  with col_sp2:
+    st.write("")
+    if st.button("🔄 Refresh", key="btn_ref_supplier_menu", use_container_width=True, help="Refresh ទំព័រអ្នកផ្គត់ផ្គង់"):
+      st.rerun()
   st.info(
       "💡 គ្រប់គ្រងព័ត៌មានផ្ទាល់ខ្លួនអ្នកផ្គត់ផ្គង់, អាស័យដ្ឋាន, ហត្ថលេខា (ជាមួយប៊ូតុងលុបផ្ទៃខាងក្រោយ), ពត៌មានផ្គត់ផ្គង់ (កម្រិតឃុំ ឬសាលា) ព្រមទាំងកំណត់តម្លៃវគ្គ១/វគ្គ២ និងផ្ទៀងផ្ទាត់ធៀបនឹងតម្លៃគោលដោយស្វ័យប្រវត្តិ។"
   )
@@ -5417,27 +5440,29 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
         with tr_col2:
           val_p1 = st.number_input(
               f"p1_{inm}",
-              min_value=0.0,
-              max_value=500000.0,
-              step=100.0,
-              value=cur_p1,
+              min_value=0,
+              max_value=5000000,
+              step=100,
+              value=int(round(cur_p1)),
               key=f"t_p1_{mat_key}_{inm}",
-              label_visibility="collapsed"
+              label_visibility="collapsed",
+              format="%d"
           )
           st.session_state[mat_key][inm]["p1"] = val_p1
         with tr_col3:
           val_p2 = st.number_input(
               f"p2_{inm}",
-              min_value=0.0,
-              max_value=500000.0,
-              step=100.0,
-              value=cur_p2,
+              min_value=0,
+              max_value=5000000,
+              step=100,
+              value=int(round(cur_p2)),
               key=f"t_p2_{mat_key}_{inm}",
-              label_visibility="collapsed"
+              label_visibility="collapsed",
+              format="%d"
           )
           st.session_state[mat_key][inm]["p2"] = val_p2
         with tr_col4:
-          row_avg = round((val_p1 + val_p2) / 2.0, 2)
+          row_avg = round((val_p1 + val_p2) / 2.0)
           row_eval = evaluate_supplier_price_status(row_avg, base_p)
           st.markdown(f"""
           <div style="background-color: {row_eval['bg_color']}; border: 1.2px solid {row_eval['border_color']}; border-radius: 7px; padding: 5px 8px; text-align: center;">
@@ -6160,7 +6185,13 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
 
 # ================= ៤. បញ្ជីគ្រប់គ្រងទំនិញ និងតម្លៃ (Admin Benchmark Matrix) =================
 elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ និងតម្លៃ", "📦 បញ្ជីមុខទំនិញ និងតម្លៃ (តាមសាលា / តាមឃុំ)", "📦 បញ្ជីមុខទំនិញតាមឃុំ (វគ្គ១/វគ្គ២/មធ្យម)"]:
-  st.title("📦 បញ្ជីគ្រប់គ្រងទំនិញ និងកំណត់តម្លៃគោល")
+  col_bm1, col_bm2 = st.columns([5, 1])
+  with col_bm1:
+    st.title("📦 បញ្ជីគ្រប់គ្រងទំនិញ និងកំណត់តម្លៃគោល")
+  with col_bm2:
+    st.write("")
+    if st.button("🔄 Refresh", key="btn_ref_bm_page", use_container_width=True, help="Refresh ទំព័រគ្រប់គ្រងតម្លៃ"):
+      st.rerun()
   st.caption("🛡️ សម្រាប់តែអ្នកគ្រប់គ្រង (Admin) | ចាប់យកមុខទំនិញទាំង ៦១ មុខពី Excel កំណត់តម្លៃគោល ព្រមទាំងគណនាតម្លៃខ្ពស់ជាង ១០% និងទាបជាង ១០% ដោយស្វ័យប្រវត្តិ")
 
   user_info = st.session_state.get("user_info") or {}
@@ -6371,6 +6402,14 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
         end_idx = start_idx + page_size
         page_catalog = filtered_catalog[start_idx:end_idx]
 
+        # Row with Refresh & Instructions
+        col_hdr_info, col_hdr_ref = st.columns([5, 1])
+        with col_hdr_info:
+          st.caption("💡 វាយបញ្ចូលតម្លៃក្នុងប្រអប់ «< 10%» ឬ «> 10%» រួចចុច Enter នោះ «តម្លៃគោល» នឹងគណនាបច្ចុប្បន្នភាពភ្លាមៗ។")
+        with col_hdr_ref:
+          if st.button("🔄 Refresh", key="btn_refresh_matrix_tab", use_container_width=True, help="Refresh តារាងតម្លៃ"):
+            st.rerun()
+
         # Table Header Row with 4 Columns: ឈ្មោះទំនិញ | < 10% | > 10% | តម្លៃគោល
         st.markdown(
             """
@@ -6393,22 +6432,12 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
           cat = it.get("category", "")
           in_data = st.session_state["admin_bm_inputs"].get(inm, {})
 
-          cur_l = float(
+          cur_l = int(round(float(
               st.session_state.get(f"bm_low_{inm}", in_data.get("low", 0))
-          )
-          cur_h = float(
+          )))
+          cur_h = int(round(float(
               st.session_state.get(f"bm_high_{inm}", in_data.get("high", 0))
-          )
-
-          # Live auto calculation of base price = (high + low) / 2
-          if cur_h > 0 and cur_l > 0:
-            calc_base = round((cur_h + cur_l) / 2.0, 2)
-          elif cur_h > 0:
-            calc_base = round(cur_h / 1.10, 2)
-          elif cur_l > 0:
-            calc_base = round(cur_l / 0.90, 2)
-          else:
-            calc_base = 0.0
+          )))
 
           c_name, c_low, c_high, c_base = st.columns([3.8, 2.1, 2.1, 2.0])
           with c_name:
@@ -6426,32 +6455,49 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
           with c_low:
             new_low = st.number_input(
                 f"<10% - {inm}",
-                min_value=0.0,
-                max_value=1000000.0,
-                step=50.0,
+                min_value=0,
+                max_value=10000000,
+                step=100,
                 value=cur_l,
                 key=f"bm_low_{inm}",
                 label_visibility="collapsed",
+                format="%d",
             )
             st.session_state["admin_bm_inputs"][inm]["low"] = new_low
           with c_high:
             new_high = st.number_input(
                 f">10% - {inm}",
-                min_value=0.0,
-                max_value=1000000.0,
-                step=50.0,
+                min_value=0,
+                max_value=10000000,
+                step=100,
                 value=cur_h,
                 key=f"bm_high_{inm}",
                 label_visibility="collapsed",
+                format="%d",
             )
             st.session_state["admin_bm_inputs"][inm]["high"] = new_high
+
+          # Live auto calculation of base price = (high + low) / 2
+          if new_high > 0 and new_low > 0:
+            calc_base = round((new_high + new_low) / 2.0)
+          elif new_high > 0:
+            calc_base = round(new_high / 1.10)
+          elif new_low > 0:
+            calc_base = round(new_low / 0.90)
+          else:
+            calc_base = 0
+
+          st.session_state["admin_bm_matrix"][inm] = calc_base
+          base_formatted = f"{int(calc_base):,} ៛"
+
           with c_base:
-            st.text_input(
-                f"គោល - {inm}",
-                value=f"{calc_base:,.1f} ៛",
-                disabled=True,
-                key=f"bm_disp_base_{inm}",
-                label_visibility="collapsed",
+            st.markdown(
+                f"""
+                <div style="background-color: #f1f5f9; border: 1.5px solid #94a3b8; border-radius: 8px; height: 38px; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #4338ca; font-size: 15px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.04);">
+                  {base_formatted}
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
     with tab_data_editor:
@@ -6465,16 +6511,16 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
       for it in filtered_catalog:
         inm = it["name"]
         in_data = st.session_state["admin_bm_inputs"].get(inm, {})
-        cur_l = float(
+        cur_l = int(round(float(
             st.session_state.get(f"bm_low_{inm}", in_data.get("low", 0))
-        )
-        cur_h = float(
+        )))
+        cur_h = int(round(float(
             st.session_state.get(f"bm_high_{inm}", in_data.get("high", 0))
-        )
+        )))
         calc_base = (
-            round((cur_h + cur_l) / 2.0, 2)
+            round((cur_h + cur_l) / 2.0)
             if (cur_h > 0 and cur_l > 0)
-            else (round(cur_h / 1.10, 2) if cur_h > 0 else 0)
+            else (round(cur_h / 1.10) if cur_h > 0 else 0)
         )
 
         editor_rows.append({
@@ -6488,6 +6534,22 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
       df_sheet = pd.DataFrame(editor_rows)
       edited_sheet = st.data_editor(
           df_sheet,
+          column_config={
+              "< 10% (ទាប)": st.column_config.NumberColumn(
+                  "< 10% (ទាប) [៛]",
+                  format="%d",
+                  step=100,
+              ),
+              "> 10% (ខ្ពស់)": st.column_config.NumberColumn(
+                  "> 10% (ខ្ពស់) [៛]",
+                  format="%d",
+                  step=100,
+              ),
+              "តម្លៃគោល (Auto)": st.column_config.NumberColumn(
+                  "🏷️ តម្លៃគោល (Auto) [៛]",
+                  format="%d",
+              ),
+          },
           disabled=["ឈ្មោះទំនិញ", "ឯកត្តា", "តម្លៃគោល (Auto)"],
           hide_index=True,
           use_container_width=True,
@@ -6499,12 +6561,12 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
         for _, r in edited_sheet.iterrows():
           inm = r["ឈ្មោះទំនិញ"]
           if inm in st.session_state["admin_bm_inputs"]:
-            st.session_state["admin_bm_inputs"][inm]["low"] = float(
+            st.session_state["admin_bm_inputs"][inm]["low"] = int(round(float(
                 r["< 10% (ទាប)"] or 0
-            )
-            st.session_state["admin_bm_inputs"][inm]["high"] = float(
+            )))
+            st.session_state["admin_bm_inputs"][inm]["high"] = int(round(float(
                 r["> 10% (ខ្ពស់)"] or 0
-            )
+            )))
 
     # Action buttons for Admin
     st.divider()
@@ -6642,7 +6704,13 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
 
 # ================= ៤. កត់ត្រា និងចេញវិក្កយបត្រប្រចាំថ្ងៃ (ឧបសម្ពន្ធ ៣) =================
 elif menu == "📝 កត់ត្រា និងចេញវិក្កយបត្រប្រចាំថ្ងៃ":
-  st.title("📝 វិក្កយបត្រផ្លូវការ (ឧបសម្ពន្ធ ៣) និងកត់ត្រាប្រចាំថ្ងៃ")
+  col_pos1, col_pos2 = st.columns([5, 1])
+  with col_pos1:
+    st.title("📝 វិក្កយបត្រផ្លូវការ (ឧបសម្ពន្ធ ៣) និងកត់ត្រាប្រចាំថ្ងៃ")
+  with col_pos2:
+    st.write("")
+    if st.button("🔄 Refresh", key="btn_ref_pos_page", use_container_width=True, help="Refresh ទំព័រវិក្កយបត្រ និងការកត់ត្រា"):
+      st.rerun()
 
   rec_main_tab1, rec_main_tab2, rec_main_tab3, rec_main_tab4 = st.tabs([
       "🧾 ប័ណ្ណទទួលស្បៀង (វិក្កយបត្រ ឧបសម្ពន្ធ ៣ / Invoice 1)",
@@ -6795,7 +6863,7 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
         if quick_item_name in prod_map:
           p1, p2 = prod_map[quick_item_name]
           def_price = p1 if quick_phase == "វគ្គ១" else p2
-        quick_price = st.number_input("តម្លៃរាយ (៛)", min_value=0.0, value=def_price, step=100.0, format="%.0f", key="quick_add_price")
+        quick_price = st.number_input("តម្លៃរាយ (៛)", min_value=0, value=int(round(def_price)), step=100, format="%d", key="quick_add_price")
 
       with col_add5:
         st.write("")
@@ -7194,10 +7262,10 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
       rec_item = st.text_input("វាយឈ្មោះទំនិញថ្មី", key="rec_new_item").strip()
       unit_p = st.number_input(
           f"តម្លៃឯកតា ({rec_phase}) (៛)",
-          min_value=0.0,
-          value=0.0,
-          step=100.0,
-          format="%.0f",
+          min_value=0,
+          value=0,
+          step=100,
+          format="%d",
       )
     else:
       rec_item = rec_item_sel
@@ -7261,7 +7329,13 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
 
 # ================= ៥. សំណើទូទាត់ប្រចាំខែ =================
 elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
-  st.title("📑 សំណើសុំទូទាត់ប្រចាំខែ (Monthly Payment Proposal)")
+  col_mo1, col_mo2 = st.columns([5, 1])
+  with col_mo1:
+    st.title("📑 សំណើសុំទូទាត់ប្រចាំខែ (Monthly Payment Proposal)")
+  with col_mo2:
+    st.write("")
+    if st.button("🔄 Refresh", key="btn_ref_monthly_page", use_container_width=True, help="Refresh ទំព័រសំណើទូទាត់"):
+      st.rerun()
   st.info(
       "💡 គំរូទម្រង់ផ្លូវការ សំណើសុំទូទាត់ប្រចាំខែ តាមឯកសារស្កេន ១០០% | "
       "ជួរឈរ **'លេខយោងក្នុងបង្កាន់ដៃទទួលទំនិញ'** ចាប់យកលេខសក្ខីប័ត្រដំបូង និងចុងក្រោយក្នុងខែស្វ័យប្រវត្តិ (គំរូ `001 - 016`) | "
@@ -7766,7 +7840,13 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
 
 # ================= ៦. បញ្ជីទិញទំនិញ & ជំពាក់ =================
 elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំពាក់អ្នកផ្គត់ផ្គង់":
-  st.title("🛒 ការទិញទំនិញ និងគ្រប់គ្រងបំណុលអ្នកផ្គត់ផ្គង់")
+  col_by1, col_by2 = st.columns([5, 1])
+  with col_by1:
+    st.title("🛒 ការទិញទំនិញ និងគ្រប់គ្រងបំណុលអ្នកផ្គត់ផ្គង់")
+  with col_by2:
+    st.write("")
+    if st.button("🔄 Refresh", key="btn_ref_buy_page", use_container_width=True, help="Refresh ទំព័រទិញទំនិញចូល"):
+      st.rerun()
   tab_buy, tab_debt, tab_import_buy = st.tabs(
       ["កត់ត្រាការទិញទំនិញចូល", "បញ្ជីជំពាក់អ្នកផ្គត់ផ្គង់", "📥 នាំចូលពីឯកសារ (Feed / Viget / Excel / OCR)"]
   )
@@ -7777,7 +7857,7 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
       b_item = st.text_input("មុខទំនិញ")
       b_qty = st.number_input("ចំនួន", min_value=1.0, value=1.0)
       b_price = st.number_input(
-          "តម្លៃរាយ (៛)", min_value=0.0, step=100.0, format="%.0f"
+          "តម្លៃរាយ (៛)", min_value=0, step=100, format="%d"
       )
       b_supplier = st.text_input("ឈ្មោះអ្នកផ្គត់ផ្គង់")
       b_status = st.selectbox("ស្ថានភាពទូទាត់", ["ទូទាត់រួច", "ជំពាក់"])
@@ -7915,7 +7995,13 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
 
 # ================= ៧. ចំណូល និងចំណាយ =================
 elif menu == "💰 ចំណូល និងចំណាយ":
-  st.title("💰 បញ្ជីគ្រប់គ្រងចំណូល និងចំណាយ")
+  col_in1, col_in2 = st.columns([5, 1])
+  with col_in1:
+    st.title("💰 បញ្ជីគ្រប់គ្រងចំណូល និងចំណាយ")
+  with col_in2:
+    st.write("")
+    if st.button("🔄 Refresh", key="btn_ref_income_page", use_container_width=True, help="Refresh ទំព័រចំណូល និងចំណាយ"):
+      st.rerun()
   col_t1, col_t2 = st.columns([1, 2])
 
   with col_t1:
@@ -7924,7 +8010,7 @@ elif menu == "💰 ចំណូល និងចំណាយ":
       t_type = st.selectbox("ប្រភេទប្រតិបត្តិការ", ["ចំណូល", "ចំណាយ"])
       t_cat = st.text_input("ប្រភេទទូទៅ (ឧ. លក់, ថ្លៃដឹក, ទឹកភ្លើង...)")
       t_amt = st.number_input(
-          "ចំនួនទឹកប្រាក់ (៛)", min_value=0.0, step=100.0, format="%.0f"
+          "ចំនួនទឹកប្រាក់ (៛)", min_value=0, step=100, format="%d"
       )
       t_desc = st.text_area("ពិពណ៌នាបន្ថែម")
 
@@ -7967,7 +8053,13 @@ elif menu == "💰 ចំណូល និងចំណាយ":
 
 # ================= ៨. គ្រប់គ្រងអ្នកប្រើប្រាស់ =================
 elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រាស់":
-  st.title("👥 គ្រប់គ្រងគណនីអ្នកប្រើប្រាស់")
+  col_u1, col_u2 = st.columns([5, 1])
+  with col_u1:
+    st.title("👥 គ្រប់គ្រងគណនីអ្នកប្រើប្រាស់")
+  with col_u2:
+    st.write("")
+    if st.button("🔄 Refresh", key="btn_ref_user_page", use_container_width=True, help="Refresh ទំព័រអ្នកប្រើប្រាស់"):
+      st.rerun()
 
   if user_info.get("role") != "Admin":
     st.error("មានតែ Admin ទេដែលអាចចូលផ្នែកនេះបាន!")
