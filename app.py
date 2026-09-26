@@ -435,6 +435,8 @@ def init_db():
     cursor.execute("ALTER TABLE suppliers ADD COLUMN target_district TEXT DEFAULT ''")
   if "target_province" not in sup_cols:
     cursor.execute("ALTER TABLE suppliers ADD COLUMN target_province TEXT DEFAULT ''")
+  if "gender" not in sup_cols:
+    cursor.execute("ALTER TABLE suppliers ADD COLUMN gender TEXT DEFAULT 'ប្រុស'")
 
   cursor.execute("""
     UPDATE suppliers 
@@ -486,11 +488,14 @@ def get_supplier_for_school(school_name):
   if not school_name:
     return None
   row = cursor.execute("""
-    SELECT supplier_name, village, commune, district, province, phone, signature_data, id, supplied_categories
+    SELECT supplier_name, village, commune, district, province, phone, signature_data, id, supplied_categories, COALESCE(gender, 'ប្រុស')
     FROM suppliers
     WHERE school_name = ?
+       OR (',' || school_name || ',') LIKE ('%,' || ? || ',%')
+       OR (school_name LIKE ('%' || ? || '%') AND school_name != '')
+       OR (supply_level = 'commune' AND target_commune = (SELECT commune FROM schools WHERE name = ? LIMIT 1))
     ORDER BY id DESC LIMIT 1
-  """, (school_name,)).fetchone()
+  """, (school_name, school_name, school_name, school_name)).fetchone()
   if row:
     addr_parts = []
     if row[1]: addr_parts.append(row[1])
@@ -505,11 +510,12 @@ def get_supplier_for_school(school_name):
         "phone": row[5] or "",
         "signature_data": row[6] or "",
         "address": " ".join(addr_parts) if addr_parts else "ភូមិខ្មែរ ឃុំរោង",
-        "supplied_categories": row[8] or "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ"
+        "supplied_categories": row[8] or "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ",
+        "gender": row[9] or "ប្រុស"
     }
   # Fallback ទៅអ្នកផ្គត់ផ្គង់ចុងក្រោយក្នុង DB
   row_any = cursor.execute("""
-    SELECT supplier_name, village, commune, district, province, phone, signature_data, id, supplied_categories
+    SELECT supplier_name, village, commune, district, province, phone, signature_data, id, supplied_categories, COALESCE(gender, 'ប្រុស')
     FROM suppliers
     ORDER BY id DESC LIMIT 1
   """).fetchone()
@@ -527,7 +533,8 @@ def get_supplier_for_school(school_name):
         "phone": row_any[5] or "",
         "signature_data": row_any[6] or "",
         "address": " ".join(addr_parts) if addr_parts else "ភូមិខ្មែរ ឃុំរោង",
-        "supplied_categories": row_any[8] or "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ"
+        "supplied_categories": row_any[8] or "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ",
+        "gender": row_any[9] or "ប្រុស"
     }
   return {
       "id": 0,
@@ -539,7 +546,8 @@ def get_supplier_for_school(school_name):
       "phone": "090 854 133",
       "signature_data": "",
       "address": "ភូមិខ្មែរ ឃុំរោង",
-      "supplied_categories": "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ"
+      "supplied_categories": "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ",
+      "gender": "ប្រុស"
   }
 
 
@@ -549,7 +557,7 @@ class SupplierRow(dict):
     keys = [
         "id", "school_name", "supplier_name", "village", "commune", "district", "province",
         "phone", "signature_data", "supplied_categories", "supply_level",
-        "target_commune", "target_district", "target_province"
+        "target_commune", "target_district", "target_province", "gender"
     ]
     d = {k: (t[i] if i < len(t) and t[i] is not None else "") for i, k in enumerate(keys)}
     super().__init__(d)
@@ -568,7 +576,8 @@ def get_all_suppliers():
            COALESCE(supply_level, 'school') as supply_level,
            COALESCE(target_commune, '') as target_commune,
            COALESCE(target_district, '') as target_district,
-           COALESCE(target_province, '') as target_province
+           COALESCE(target_province, '') as target_province,
+           COALESCE(gender, 'ប្រុស') as gender
     FROM suppliers
     ORDER BY id DESC
   """)
@@ -586,16 +595,19 @@ def get_suppliers_for_school_and_commune(school_name, commune_name):
   query = """
     SELECT id, school_name, supplier_name, village, commune, district, province,
            phone, signature_data, supplied_categories, supply_level,
-           target_commune, target_district, target_province
+           target_commune, target_district, target_province,
+           COALESCE(gender, 'ប្រុស') as gender
     FROM suppliers
     WHERE (school_name = ? AND school_name != '')
+       OR ((',' || school_name || ',') LIKE ('%,' || ? || ',%'))
+       OR (school_name LIKE ('%' || ? || '%') AND school_name != '')
        OR (target_commune = ? AND target_commune != '')
        OR (target_commune = ? AND target_commune != '')
        OR (commune = ? AND commune != '')
        OR (commune = ? AND commune != '')
     ORDER BY id ASC
   """
-  rows = cursor.execute(query, (school_name or "", commune_name or "", clean_c, commune_name or "", clean_c)).fetchall()
+  rows = cursor.execute(query, (school_name or "", school_name or "", school_name or "", commune_name or "", clean_c, commune_name or "", clean_c)).fetchall()
   for r in rows:
     s = SupplierRow(r)
     if s["supplier_name"] and s["supplier_name"] not in seen_names:
@@ -627,25 +639,27 @@ def save_or_update_supplier(
     target_commune="",
     target_district="",
     target_province="",
+    gender="ប្រុស",
     supplier_id=None
 ):
   """រក្សាទុក ឬកែប្រែអ្នកផ្គត់ផ្គង់តាមសាលា ឬតាមឃុំ"""
   sc = supplied_categories or "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ"
+  g_val = gender or "ប្រុស"
   if supplier_id:
     if signature_data is not None:
       cursor.execute("""
         UPDATE suppliers 
         SET school_name=?, supplier_name=?, village=?, commune=?, district=?, province=?, phone=?,
-            signature_data=?, supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?
+            signature_data=?, supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?, gender=?
         WHERE id=?
-      """, (school_name, supplier_name, village, commune, district, province, phone, signature_data, sc, supply_level, target_commune, target_district, target_province, supplier_id))
+      """, (school_name, supplier_name, village, commune, district, province, phone, signature_data, sc, supply_level, target_commune, target_district, target_province, g_val, supplier_id))
     else:
       cursor.execute("""
         UPDATE suppliers 
         SET school_name=?, supplier_name=?, village=?, commune=?, district=?, province=?, phone=?,
-            supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?
+            supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?, gender=?
         WHERE id=?
-      """, (school_name, supplier_name, village, commune, district, province, phone, sc, supply_level, target_commune, target_district, target_province, supplier_id))
+      """, (school_name, supplier_name, village, commune, district, province, phone, sc, supply_level, target_commune, target_district, target_province, g_val, supplier_id))
     conn.commit()
     return supplier_id
   else:
@@ -659,18 +673,18 @@ def save_or_update_supplier(
       cursor.execute("""
         UPDATE suppliers 
         SET school_name=?, village=?, commune=?, district=?, province=?, phone=?,
-            signature_data=COALESCE(?, signature_data), supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?
+            signature_data=COALESCE(?, signature_data), supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?, gender=?
         WHERE id=?
-      """, (school_name, village, commune, district, province, phone, signature_data, sc, supply_level, target_commune, target_district, target_province, s_id))
+      """, (school_name, village, commune, district, province, phone, signature_data, sc, supply_level, target_commune, target_district, target_province, g_val, s_id))
       conn.commit()
       return s_id
     else:
       cursor.execute("""
         INSERT INTO suppliers (
           school_name, supplier_name, village, commune, district, province, phone,
-          signature_data, supplied_categories, supply_level, target_commune, target_district, target_province
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      """, (school_name, supplier_name, village, commune, district, province, phone, signature_data or "", sc, supply_level, target_commune, target_district, target_province))
+          signature_data, supplied_categories, supply_level, target_commune, target_district, target_province, gender
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      """, (school_name, supplier_name, village, commune, district, province, phone, signature_data or "", sc, supply_level, target_commune, target_district, target_province, g_val))
       conn.commit()
       return cursor.lastrowid
 
@@ -880,17 +894,29 @@ def filter_and_price_monthly_items(items, supplier_name, supplier_obj=None, clai
 
 
 def save_all_supplier_prices(supplier_name, price_dict, supply_level="school", target_school="", target_commune="", target_district="", target_province=""):
-  """រក្សាទុកតម្លៃទំនិញទាំងអស់សម្រាប់អ្នកផ្គត់ផ្គង់នេះ"""
+  """រក្សាទុកតម្លៃទំនិញទាំងអស់សម្រាប់អ្នកផ្គត់ផ្គង់នេះ (រក្សាទុកតែមុខទំនិញដែលបានធិកជ្រើសយក)"""
   saved_count = 0
+  active_categories = set()
   for it in SUPPLIER_PRODUCT_CATALOG:
     name = it["name"]
     category = it["category"]
-    p_info = price_dict.get(name, {"p1": it["default_p1"], "p2": it["default_p2"]})
+    p_info = price_dict.get(name, {"p1": it["default_p1"], "p2": it["default_p2"], "selected": True})
+    is_sel = p_info.get("selected", True)
+
+    if not is_sel:
+      # If unchecked/not selected, remove from products for this supplier
+      cursor.execute("""
+        DELETE FROM products 
+        WHERE supplier_name=? AND item_name=? AND price_level='supplier'
+      """, (supplier_name, name))
+      continue
+
     p1 = float(p_info.get("p1", it["default_p1"]))
     p2 = float(p_info.get("p2", it["default_p2"]))
     avg_p = round((p1 + p2) / 2.0, 2)
     sch_col = target_school if supply_level == "school" else ""
     com_col = target_commune
+    active_categories.add(category)
 
     existing = cursor.execute("""
       SELECT id FROM products 
@@ -912,6 +938,11 @@ def save_all_supplier_prices(supplier_name, price_dict, supply_level="school", t
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'supplier', ?)
       """, (name, com_col, target_district, target_province, sch_col, p1, p2, avg_p, category, supplier_name))
     saved_count += 1
+
+  # Sync active categories to suppliers.supplied_categories if any items were selected
+  if active_categories:
+    cat_str = ", ".join(sorted(list(active_categories)))
+    cursor.execute("UPDATE suppliers SET supplied_categories=? WHERE supplier_name=?", (cat_str, supplier_name))
 
   conn.commit()
   return saved_count
@@ -938,21 +969,23 @@ def process_signature_image(
     softness: int = 40,
     recolor_choice: str = "blue",
     custom_hex: str = "#0B3C95",
-    contrast_boost: float = 1.2
+    contrast_boost: float = 1.2,
+    brightness: float = 1.0
 ) -> str:
   """
   បម្លែងរូបភាពហត្ថលេខា/ត្រា៖
   1. ✨ Remove Background: លុបផ្ទៃក្រដាសស ឬស្រអាប់ចេញឱ្យថ្លា (Transparent PNG)
-  2. 🎨 Recolor: កែប្រែពណ៌ទឹកប៊ិច (ខៀវផ្លូវការ, ខ្មៅដិត, ត្រាក្រហម, ឬពណ៌តាមចិត្ត)
-  3. ✂️ Auto-Crop: កាត់គែមទទេជុំវិញចេញឱ្យល្មមស្អាត
-  4. 📦 Return: Data URL Base64 ('data:image/png;base64,...')
+  2. 🎨 Recolor: កែប្រែពណ៌ទឹកប៊ិច (ខៀវផ្លូវការ, ខ្មៅដិត, ត្រាក្រហម / ប៊ិកខៀវ, ឬពណ៌តាមចិត្ត)
+  3. ☀️ Brightness: កែតម្រូវពន្លឺរូបភាព
+  4. ✂️ Auto-Crop: កាត់គែមទទេជុំវិញចេញឱ្យល្មមស្អាត
+  5. 📦 Return: Data URL Base64 ('data:image/png;base64,...')
   """
   if image_input is None:
     return None
   try:
     import io
     import base64
-    from PIL import Image
+    from PIL import Image, ImageEnhance
     import numpy as np
 
     # ១. អានរូបភាពចូលជា PIL Image
@@ -974,6 +1007,12 @@ def process_signature_image(
 
     # បម្លែងជា RGBA
     img = img.convert("RGBA")
+
+    # មុខងារបន្ថែមពន្លឺ (Brightness Enhancement)
+    if brightness != 1.0:
+      enhancer = ImageEnhance.Brightness(img)
+      img = enhancer.enhance(float(brightness))
+
     arr = np.array(img, dtype=np.float32)
     r, g, b, a = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2], arr[:, :, 3]
 
@@ -995,7 +1034,6 @@ def process_signature_image(
     palette = {
         "blue": (11, 60, 149),     # #0B3C95 Official Royal Blue
         "black": (17, 24, 39),     # #111827 Deep Black
-        "red": (220, 38, 38)       # #DC2626 Official Stamp Red
     }
 
     if recolor_choice in palette:
@@ -1003,6 +1041,14 @@ def process_signature_image(
       out_r = np.full_like(r, tr)
       out_g = np.full_like(g, tg)
       out_b = np.full_like(b, tb)
+    elif recolor_choice == "red":
+      # ត្រាក្រហម / ប៊ិកខៀវ៖
+      # - ភីកសែលដែលមានស្រមោលក្រហម (ត្រា): ធ្វើឱ្យក្រហមដិត (220, 38, 38)
+      # - ភីកសែលដែលមានស្រមោលប៊ិច ឬពណ៌ងងឹតផ្សេងទៀត: ធ្វើឱ្យទៅជាទឹកប៊ិចខៀវផ្លូវការ (11, 60, 149)
+      is_red = (r > g + 20) & (r > b + 20) & (r > 60)
+      out_r = np.where(is_red, 220.0, 11.0)
+      out_g = np.where(is_red, 38.0, 60.0)
+      out_b = np.where(is_red, 38.0, 149.0)
     elif recolor_choice == "custom":
       c = str(custom_hex).lstrip("#")
       if len(c) == 6:
@@ -1050,8 +1096,10 @@ def render_signature_uploader_with_tools(
   """
   Component បង្ហាញ UI សម្រាប់ Upload ហត្ថលេខា ជាមួយមុខងារ៖
   - 📤 File uploader
-  - ✨ Remove background (លុបផ្ទៃខាងក្រោយ ថ្លា)
-  - 🎨 Recolor ទឹកប៊ិច (ខៀវផ្លូវការ, ខ្មៅ, ក្រហម, ពណ៌តាមចិត្ត, ពណ៌ដើម)
+  - 🌐 ប៊ូតុងលុបផ្ទៃក្រោយតាម remove-background.com
+  - ✨ Remove background ស្វ័យប្រវត្តក្នុងប្រព័ន្ធ (លុបផ្ទៃខាងក្រោយ ថ្លា)
+  - 🎨 Recolor ទឹកប៊ិច (ខៀវផ្លូវការ, ខ្មៅ, ត្រាក្រហម / ប៊ិកខៀវ, ពណ៌តាមចិត្ត, ពណ៌ដើម)
+  - ☀️ មុខងារបន្ថែមពន្លឺ (Brightness)
   - 🎚️ Slider កម្រិតសម្អាតក្រដាសស
   - 👁️ Live preview
   """
@@ -1091,7 +1139,15 @@ def render_signature_uploader_with_tools(
 
   # បង្ហាញឧបករណ៍កែសម្រួល (Remove Background & Recolor)
   with st.expander("🛠️ ឧបករណ៍លុបផ្ទៃក្រោយ & កែប្រែពណ៌ហត្ថលេខា", expanded=(up_file is not None)):
-    c1, c2 = st.columns(2)
+    st.link_button(
+        "🌐 លុបផ្ទៃខាងក្រោយតាម remove-background.com",
+        "https://remove-background.com",
+        use_container_width=True,
+        help="ចុចដើម្បីបើកគេហទំព័រ Remove Background ដោយឥតគិតថ្លៃ"
+    )
+    st.caption("💡 អាចចុចប៊ូតុងខាងលើដើម្បីលុបផ្ទៃក្រោយតាមគេហទំព័រ ឬប្រើប្រាស់ឧបករណ៍ខាងក្រោម៖")
+
+    c1, c2, c3 = st.columns([1.2, 1.3, 1.1])
     with c1:
       rm_bg = st.checkbox(
           "✨ លុបផ្ទៃខាងក្រោយ (ថ្លា)",
@@ -1118,7 +1174,7 @@ def render_signature_uploader_with_tools(
           format_func=lambda x: {
               "blue": "🔵 ទឹកប៊ិចខៀវ (ផ្លូវការ)",
               "black": "⚫ ទឹកប៊ិចខ្មៅដិត",
-              "red": "🔴 ត្រាក្រហម / ប៊ិចក្រហម",
+              "red": "🔴 ត្រាក្រហម / 🔵 ប៊ិកខៀវ",
               "keep": "🔄 រក្សាពណ៌ដើម",
               "custom": "🎨 ជ្រើសរើសពណ៌តាមចិត្ត..."
           }.get(x, x),
@@ -1127,13 +1183,24 @@ def render_signature_uploader_with_tools(
       custom_hex = "#0B3C95"
       if color_mode == "custom":
         custom_hex = st.color_picker("ជ្រើសរើសពណ៌", value="#0B3C95", key=f"{key_prefix}_custom_hex")
+    with c3:
+      bright_val = st.slider(
+          "☀️ បន្ថែមពន្លឺ",
+          min_value=0.5,
+          max_value=2.0,
+          value=1.0,
+          step=0.1,
+          key=f"{key_prefix}_bright",
+          help="បង្កើនពន្លឺឱ្យរូបភាពកាន់តែភ្លឺច្បាស់"
+      )
 
   processed_sig = process_signature_image(
       source_img,
       remove_bg=rm_bg,
       threshold=thresh,
       recolor_choice=color_mode,
-      custom_hex=custom_hex
+      custom_hex=custom_hex,
+      brightness=bright_val
   )
 
   if processed_sig:
@@ -4785,6 +4852,7 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
         sup_display_list.append({
             "ID": s["id"],
             "ឈ្មោះអ្នកផ្គត់ផ្គង់": s["supplier_name"],
+            "ភេទ": s.get("gender", "ប្រុស") or "ប្រុស",
             "លេខទូរស័ព្ទ": s["phone"] or "-",
             "អាស័យដ្ឋានអ្នកផ្គត់ផ្គង់": full_addr,
             "កម្រិតផ្គត់ផ្គង់": lvl_label,
@@ -4808,7 +4876,7 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
           if picked_s:
             cd_col1, cd_col2 = st.columns([2, 1])
             with cd_col1:
-              st.markdown(f"#### 👤 {picked_s['supplier_name']}")
+              st.markdown(f"#### 👤 {picked_s['supplier_name']} ({picked_s.get('gender', 'ប្រុស')})")
               st.markdown(f"📞 **លេខទូរស័ព្ទ៖** `{picked_s['phone'] or '-'}`")
               st.markdown(f"📍 **អាស័យដ្ឋានផ្ទាល់ខ្លួន៖** {picked_s['village']} {picked_s['commune']} {picked_s['district']} {picked_s['province']}")
               st.markdown(f"🎯 **កម្រិតផ្គត់ផ្គង់៖** `{'តាមឃុំ (Commune Level)' if picked_s['supply_level'] == 'commune' else 'តាមសាលា (School Level)'}`")
@@ -4848,10 +4916,14 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
 
     # 1. ព័ត៌មានផ្ទាល់ខ្លួន
     st.markdown("#### 👤 ១. ព័ត៌មានផ្ទាល់ខ្លួនអ្នកផ្គត់ផ្គង់")
-    col_p1, col_p2 = st.columns(2)
+    col_p1, col_p2, col_p3 = st.columns([1.5, 1, 1.5])
     with col_p1:
       val_name = st.text_input("ឈ្មោះអ្នកផ្គត់ផ្គង់ *", value=(cur_sup["supplier_name"] if cur_sup else ""), placeholder="ឧ. សាត ក្រូត", key=f"inp_sup_name_{sup_id_for_key}").strip()
     with col_p2:
+      cur_gender = cur_sup.get("gender", "ប្រុស") if cur_sup else "ប្រុស"
+      g_idx = 1 if cur_gender == "ស្រី" else 0
+      val_gender = st.radio("ភេទ", ["ប្រុស", "ស្រី"], index=g_idx, horizontal=True, key=f"inp_sup_gender_{sup_id_for_key}")
+    with col_p3:
       val_phone = st.text_input("លេខទូរស័ព្ទ", value=(cur_sup["phone"] if cur_sup else ""), placeholder="ឧ. 090 854 133", key=f"inp_sup_phone_{sup_id_for_key}").strip()
 
     # 2. អាស័យដ្ឋានអ្នកផ្គត់ផ្គង់
@@ -4924,16 +4996,39 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
 
     if not is_commune_level:
       school_candidates = get_schools_by_commune(tgt_commune) if tgt_commune else get_all_schools()
-      cur_target_sch = cur_sup["school_name"] if cur_sup else ""
-      sch_idx = school_candidates.index(cur_target_sch) if cur_target_sch in school_candidates else 0
-      col_s1, col_s2 = st.columns([2, 1])
-      with col_s1:
-        sel_sch = st.selectbox("🏫 សាលារៀនដែលត្រូវផ្គត់ផ្គង់ *", school_candidates + ["➕ វាយបញ្ចូលសាលាថ្មី..."], index=sch_idx, key=f"t_sch_sel_{sup_id_for_key}")
-      with col_s2:
-        if sel_sch == "➕ វាយបញ្ចូលសាលាថ្មី...":
-          tgt_school = st.text_input("វាយបញ្ចូលឈ្មោះសាលាថ្មី", key=f"t_sch_new_{sup_id_for_key}").strip()
-        else:
-          tgt_school = sel_sch
+      if not school_candidates:
+        school_candidates = get_all_schools()
+
+      # វិភាគសាលាដែលធ្លាប់បានជ្រើសរើស (គាំទ្រទាំងសាលាតែមួយ ឬច្រើនសាលាកាត់ដោយក្បៀស)
+      cur_target_sch_raw = cur_sup["school_name"] if cur_sup else ""
+      cur_selected_list = [s.strip() for s in str(cur_target_sch_raw).split(",") if s.strip()]
+
+      st.markdown(f"##### 🏫 ជ្រើសរើសសាលារៀនក្នុងឃុំ **{tgt_commune}** (សូមធីកជ្រើសរើសសាលាដែលត្រូវផ្គត់ផ្គង់)៖")
+      col_all_sch, col_sch_note = st.columns([1.5, 3.5])
+      with col_all_sch:
+        chk_all_comm_sch = st.checkbox("☑️ ជ្រើសរើសគ្រប់សាលាទាំងអស់ក្នុងឃុំនេះ", key=f"chk_all_comm_sch_{sup_id_for_key}")
+      with col_sch_note:
+        st.caption(f"💡 ក្នុងឃុំ **{tgt_commune}** មានសាលារៀនចំនួន **{len(school_candidates)}** សាលា។")
+
+      selected_schools = []
+      sch_grid_cols = st.columns(3)
+      for i, sch_name in enumerate(school_candidates):
+        grid_col = sch_grid_cols[i % 3]
+        with grid_col:
+          def_checked = True if chk_all_comm_sch else (sch_name in cur_selected_list)
+          if st.checkbox(f"🏫 {sch_name}", value=def_checked, key=f"chk_sch_pick_{sup_id_for_key}_{sch_name}"):
+            selected_schools.append(sch_name)
+
+      # ប្រអប់វាយបញ្ចូលឈ្មោះសាលាបន្ថែម
+      extra_sch = st.text_input("➕ វាយបញ្ចូលឈ្មោះសាលាបន្ថែម (ប្រសិនបើគ្មានក្នុងបញ្ជីខាងលើ)", key=f"t_sch_extra_{sup_id_for_key}").strip()
+      if extra_sch and extra_sch not in selected_schools:
+        selected_schools.append(extra_sch)
+
+      tgt_school = ", ".join(selected_schools)
+      if selected_schools:
+        st.success(f"✅ បានជ្រើសរើស **{len(selected_schools)} សាលា**៖ {tgt_school}")
+      else:
+        st.warning("⚠️ សូមធីកជ្រើសរើសយ៉ាងហោចណាស់សាលារៀន ១ សម្រាប់អ្នកផ្គត់ផ្គង់នេះ!")
     else:
       tgt_school = ""
       st.info(f"🏛️ អ្នកផ្គត់ផ្គង់នេះ ផ្គត់ផ្គង់គ្រប់សាលារៀនទាំងអស់នៅក្នុង **ឃុំ{tgt_commune}**")
@@ -4957,35 +5052,55 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
     if mat_key not in st.session_state:
       st.session_state[mat_key] = {}
       saved_sup_prices = get_supplier_prices_map(cur_sup["supplier_name"]) if cur_sup else {}
+      has_saved = bool(saved_sup_prices)
       for it in SUPPLIER_PRODUCT_CATALOG:
         inm = it["name"]
         if inm in saved_sup_prices:
           st.session_state[mat_key][inm] = {
               "p1": float(saved_sup_prices[inm]["p1"]),
-              "p2": float(saved_sup_prices[inm]["p2"])
+              "p2": float(saved_sup_prices[inm]["p2"]),
+              "selected": True
           }
         else:
           st.session_state[mat_key][inm] = {
               "p1": float(it["default_p1"]),
-              "p2": float(it["default_p2"])
+              "p2": float(it["default_p2"]),
+              "selected": not has_saved
           }
 
-    # Group & Category Filter Buttons
-    col_btn_grp, col_btn_cat = st.columns(2)
-    with col_btn_grp:
-      sel_grp = st.segmented_control(
-          "🏷️ ប៊ូតុងជ្រើសរើសក្រុមទំនិញ៖",
-          options=["🌟 ទាំងអស់", "🌾 ស្បៀងគោល", "🥦 បន្លែគោល", "🥩 ស្បៀងបន្ថែម", "🥕 បន្លែបន្ថែម"],
-          default="🌟 ទាំងអស់",
-          key=f"ctrl_grp_{sup_id_for_key}"
-      ) or "🌟 ទាំងអស់"
-    with col_btn_cat:
-      sel_cat = st.segmented_control(
-          "🛒 ប៊ូតុងជ្រើសរើសប្រភេទទំនិញ៖",
-          options=["🌟 ទាំងអស់", "🍚 អង្ករ", "🫗 ប្រេងឆា", "🧂 អំបិល", "🥩 ត្រី សាច់ ស៊ុត", "🥬 បន្លែ"],
-          default="🌟 ទាំងអស់",
-          key=f"ctrl_cat_{sup_id_for_key}"
-      ) or "🌟 ទាំងអស់"
+    # Group & Category Filter Buttons (បង្ហាញ Option ជ្រើសរើសទាំងអស់ពេញលេញ មិនកាត់)
+    sel_grp = st.segmented_control(
+        "🏷️ ប៊ូតុងជ្រើសរើសក្រុមទំនិញ៖",
+        options=["🌟 ទាំងអស់", "🌾 ស្បៀងគោល", "🥦 បន្លែគោល", "🥩 ស្បៀងបន្ថែម", "🥕 បន្លែបន្ថែម"],
+        default="🌟 ទាំងអស់",
+        key=f"ctrl_grp_{sup_id_for_key}"
+    ) or "🌟 ទាំងអស់"
+
+    sel_cat = st.segmented_control(
+        "🛒 ប៊ូតុងជ្រើសរើសប្រភេទទំនិញ៖",
+        options=["🌟 ទាំងអស់", "🍚 អង្ករ", "🫗 ប្រេងឆា", "🧂 អំបិល", "🥩 ត្រី សាច់ ស៊ុត", "🥬 បន្លែ"],
+        default="🌟 ទាំងអស់",
+        key=f"ctrl_cat_{sup_id_for_key}"
+    ) or "🌟 ទាំងអស់"
+
+    col_kw_search, col_bulk_btns = st.columns([3, 2])
+    with col_kw_search:
+      sup_kw = st.text_input("🔍 ស្វែងរកមុខទំនិញ...", placeholder="វាយឈ្មោះមុខទំនិញដើម្បីស្វែងរក...", key=f"sup_kw_srch_{sup_id_for_key}").strip().lower()
+    with col_bulk_btns:
+      st.write("")
+      c_b1, c_b2 = st.columns(2)
+      with c_b1:
+        if st.button("☑️ ធីកយកទាំងអស់", use_container_width=True, key=f"btn_bulk_tick_{sup_id_for_key}"):
+          for it in SUPPLIER_PRODUCT_CATALOG:
+            if it["name"] in st.session_state[mat_key]:
+              st.session_state[mat_key][it["name"]]["selected"] = True
+          st.rerun()
+      with c_b2:
+        if st.button("❌ ដោះធីកទាំងអស់", use_container_width=True, key=f"btn_bulk_untick_{sup_id_for_key}"):
+          for it in SUPPLIER_PRODUCT_CATALOG:
+            if it["name"] in st.session_state[mat_key]:
+              st.session_state[mat_key][it["name"]]["selected"] = False
+          st.rerun()
 
     clean_grp = sel_grp.replace("🌾 ", "").replace("🥦 ", "").replace("🥩 ", "").replace("🥕 ", "").replace("🌟 ", "").strip()
     clean_cat = sel_cat.replace("🍚 ", "").replace("🫗 ", "").replace("🧂 ", "").replace("🥩 ", "").replace("🥬 ", "").replace("🌟 ", "").strip()
@@ -4996,17 +5111,23 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
         continue
       if clean_cat != "ទាំងអស់" and it["category"] != clean_cat:
         continue
+      if sup_kw and sup_kw not in it["name"].lower():
+        continue
       filtered_prods.append(it)
 
-    # Calculate real-time statistics across all 61 items
+    # Calculate real-time statistics
     cnt_red = 0
     cnt_yellow = 0
     cnt_lime = 0
+    cnt_selected = 0
     for it in SUPPLIER_PRODUCT_CATALOG:
       inm = it["name"]
-      p_vals = st.session_state[mat_key].get(inm, {"p1": it["default_p1"], "p2": it["default_p2"]})
+      p_vals = st.session_state[mat_key].get(inm, {"p1": it["default_p1"], "p2": it["default_p2"], "selected": True})
       p1_v = float(p_vals.get("p1", it["default_p1"]))
       p2_v = float(p_vals.get("p2", it["default_p2"]))
+      is_s = p_vals.get("selected", True)
+      if is_s:
+        cnt_selected += 1
       avg_v = round((p1_v + p2_v) / 2.0, 2)
       base_v = get_catalog_base_price(inm, tgt_school if not is_commune_level else None, tgt_commune)
       ev_st = evaluate_supplier_price_status(avg_v, base_v)
@@ -5015,92 +5136,108 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
       elif ev_st["status"] == "normal_lime": cnt_lime += 1
 
     # KPI summary bar
-    kp1, kp2, kp3, kp4 = st.columns(4)
+    kp1, kp2, kp3, kp4, kp5 = st.columns(5)
     with kp1:
       st.metric("📦 កំពុងបង្ហាញ", f"{len(filtered_prods)} មុខ", delta=f"សរុប {len(SUPPLIER_PRODUCT_CATALOG)} មុខ")
     with kp2:
-      st.metric("🔴 ថ្លៃជាងគោល >10%", f"{cnt_red} មុខ", delta="ក្រហម" if cnt_red > 0 else "គ្មាន", delta_color="inverse")
+      st.metric("☑️ បានជ្រើសយក", f"{cnt_selected} មុខ", delta=f"មិនយក {len(SUPPLIER_PRODUCT_CATALOG) - cnt_selected} មុខ")
     with kp3:
-      st.metric("🟡 ថោកជាងគោល >10%", f"{cnt_yellow} មុខ", delta="លឿង" if cnt_yellow > 0 else "គ្មាន", delta_color="off")
+      st.metric("🔴 ថ្លៃជាងគោល >10%", f"{cnt_red} មុខ", delta="ក្រហម" if cnt_red > 0 else "គ្មាន", delta_color="inverse")
     with kp4:
+      st.metric("🟡 ថោកជាងគោល >10%", f"{cnt_yellow} មុខ", delta="លឿង" if cnt_yellow > 0 else "គ្មាន", delta_color="off")
+    with kp5:
       st.metric("🟢 ត្រួយចេក (±10%)", f"{cnt_lime} មុខ", delta="សមស្រប", delta_color="normal")
 
     st.markdown("---")
 
     if not filtered_prods:
-      st.warning(f"⚠️ គ្មានមុខទំនិញដែលត្រូវគ្នានឹងក្រុម «{clean_grp}» និងប្រភេទ «{clean_cat}» ទេ។ សូមជ្រើសរើស «🌟 ទាំងអស់»។")
+      st.warning(f"⚠️ គ្មានមុខទំនិញដែលត្រូវគ្នានឹងការចម្រាញ់នេះទេ។")
     else:
-      # Display products vertically
-      for it in filtered_prods:
+      # Table Header: ល.រ, ឈ្មោះទំនិញ, តម្លៃវគ្គ១, តម្លៃវគ្គ២, តម្លៃមធ្យម, ស្ថានភាព (ធិក/ខ្វែង)
+      th_col0, th_col1, th_col2, th_col3, th_col4, th_col5 = st.columns([0.6, 2.8, 1.4, 1.4, 1.8, 1.4])
+      with th_col0:
+        st.markdown("<div style='text-align: center; font-weight: 700; color: #1e293b;'>ល.រ</div>", unsafe_allow_html=True)
+      with th_col1:
+        st.markdown("<div style='font-weight: 700; color: #1e293b;'>ឈ្មោះមុខទំនិញ & ឯកត្តា</div>", unsafe_allow_html=True)
+      with th_col2:
+        st.markdown("<div style='font-weight: 700; color: #1e293b; text-align: center;'>តម្លៃវគ្គ១ (៛)</div>", unsafe_allow_html=True)
+      with th_col3:
+        st.markdown("<div style='font-weight: 700; color: #1e293b; text-align: center;'>តម្លៃវគ្គ២ (៛)</div>", unsafe_allow_html=True)
+      with th_col4:
+        st.markdown("<div style='font-weight: 700; color: #1e293b; text-align: center;'>តម្លៃមធ្យម (៛)</div>", unsafe_allow_html=True)
+      with th_col5:
+        st.markdown("<div style='font-weight: 700; color: #1e293b; text-align: center;'>ស្ថានភាព (☑️/❌)</div>", unsafe_allow_html=True)
+      st.divider()
+
+      for row_idx, it in enumerate(filtered_prods, 1):
         inm = it["name"]
         unit = it["unit"]
         grp = it["group"]
         cat = it["category"]
         base_p = get_catalog_base_price(inm, tgt_school if not is_commune_level else None, tgt_commune)
 
-        # Retrieve current prices
-        cur_p_entry = st.session_state[mat_key].get(inm, {"p1": it["default_p1"], "p2": it["default_p2"]})
-        cur_p1 = float(cur_p_entry.get("p1", it["default_p1"]))
-        cur_p2 = float(cur_p_entry.get("p2", it["default_p2"]))
+        cur_entry = st.session_state[mat_key].get(inm, {"p1": it["default_p1"], "p2": it["default_p2"], "selected": True})
+        cur_p1 = float(cur_entry.get("p1", it["default_p1"]))
+        cur_p2 = float(cur_entry.get("p2", it["default_p2"]))
+        cur_sel = bool(cur_entry.get("selected", True))
         cur_avg = round((cur_p1 + cur_p2) / 2.0, 2)
         cur_eval = evaluate_supplier_price_status(cur_avg, base_p)
 
-        # Render styled item container
-        st.markdown(f"""
-        <div style="background-color: {cur_eval['bg_color']}; border: 1.5px solid {cur_eval['border_color']}; border-radius: 8px; padding: 10px 14px; margin-top: 12px; margin-bottom: 6px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
-            <div>
-              <span style="font-size: 16px; font-weight: 700; color: #0f172a;">{inm}</span>
-              <span style="font-size: 13px; color: #475569; margin-left: 6px; font-weight: 500;">({unit})</span>
-              <span style="background: rgba(0,0,0,0.06); padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 8px; font-weight: 600; color: #334155;">{grp}</span>
-              <span style="background: rgba(0,0,0,0.04); padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 4px; color: #64748b;">{cat}</span>
-              <div style="font-size: 12px; color: #475569; margin-top: 3px;">
-                🏷️ តម្លៃគោល៖ <b>{format_riel(base_p)}</b> &nbsp;|&nbsp; ចន្លោះ ±10%៖ <b>{format_riel(base_p * 0.9)}</b> ~ <b>{format_riel(base_p * 1.1)}</b>
-              </div>
-            </div>
-            <div style="text-align: right;">
-              <div style="font-size: 15px; font-weight: 800; color: {cur_eval['text_color']};">
-                តម្លៃមធ្យម៖ {format_riel(cur_avg)}
-              </div>
-              <div style="font-size: 12px; font-weight: 700; color: {cur_eval['text_color']}; margin-top: 2px;">
-                {cur_eval['badge_text']}
-              </div>
+        tr_col0, tr_col1, tr_col2, tr_col3, tr_col4, tr_col5 = st.columns([0.6, 2.8, 1.4, 1.4, 1.8, 1.4])
+        with tr_col0:
+          st.markdown(f"<div style='text-align: center; font-weight: 700; color: #64748b; padding-top: 10px;'>{row_idx}</div>", unsafe_allow_html=True)
+        with tr_col1:
+          op_style = "opacity: 1;" if cur_sel else "opacity: 0.55; text-decoration: line-through;"
+          st.markdown(f"""
+          <div style="{op_style} padding-top: 4px;">
+            <span style="font-weight: 700; font-size: 14.5px; color: #0f172a;">{inm}</span>
+            <span style="font-size: 12px; color: #64748b;">({unit})</span>
+            <div style="font-size: 11px; color: #475569; margin-top: 2px;">
+              <span style="background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-weight: 600; color: #334155;">{grp}</span>
+              <span style="background: #f8fafc; padding: 1px 6px; border-radius: 4px; color: #64748b; margin-left: 3px;">{cat}</span>
+              &nbsp;|&nbsp; 🏷️ គោល: <b>{format_riel(base_p)}</b>
             </div>
           </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        col_in1, col_in2, col_disp_avg = st.columns([2, 2, 2])
-        with col_in1:
+          """, unsafe_allow_html=True)
+        with tr_col2:
           val_p1 = st.number_input(
-              f"តម្លៃវគ្គ១ (៛) - {inm}",
+              f"p1_{inm}",
               min_value=0.0,
               max_value=500000.0,
               step=100.0,
               value=cur_p1,
-              key=f"inp_p1_{mat_key}_{inm}",
-              help="តម្លៃក្នុងវគ្គទី ១"
+              key=f"t_p1_{mat_key}_{inm}",
+              label_visibility="collapsed"
           )
           st.session_state[mat_key][inm]["p1"] = val_p1
-        with col_in2:
+        with tr_col3:
           val_p2 = st.number_input(
-              f"តម្លៃវគ្គ២ (៛) - {inm}",
+              f"p2_{inm}",
               min_value=0.0,
               max_value=500000.0,
               step=100.0,
               value=cur_p2,
-              key=f"inp_p2_{mat_key}_{inm}",
-              help="តម្លៃក្នុងវគ្គទី ២"
+              key=f"t_p2_{mat_key}_{inm}",
+              label_visibility="collapsed"
           )
           st.session_state[mat_key][inm]["p2"] = val_p2
-        with col_disp_avg:
-          re_avg = round((val_p1 + val_p2) / 2.0, 2)
-          st.text_input(
-              f"តម្លៃមធ្យមគណនាស្វ័យប្រវត្តិ - {inm}",
-              value=f"មធ្យម៖ {format_riel(re_avg)}",
-              disabled=True,
-              key=f"disp_avg_{mat_key}_{inm}"
+        with tr_col4:
+          row_avg = round((val_p1 + val_p2) / 2.0, 2)
+          row_eval = evaluate_supplier_price_status(row_avg, base_p)
+          st.markdown(f"""
+          <div style="background-color: {row_eval['bg_color']}; border: 1.2px solid {row_eval['border_color']}; border-radius: 7px; padding: 5px 8px; text-align: center;">
+            <div style="font-weight: 800; font-size: 13.5px; color: {row_eval['text_color']};">{format_riel(row_avg)}</div>
+            <div style="font-size: 10px; font-weight: 700; color: {row_eval['text_color']}; margin-top: 1px;">{row_eval['badge_text']}</div>
+          </div>
+          """, unsafe_allow_html=True)
+        with tr_col5:
+          chk_lbl = "☑️ ជ្រើសយក" if cur_sel else "❌ មិនយក"
+          is_chosen = st.checkbox(
+              chk_lbl,
+              value=cur_sel,
+              key=f"chk_status_{mat_key}_{inm}"
           )
+          st.session_state[mat_key][inm]["selected"] = is_chosen
 
     # Action buttons
     st.divider()
@@ -5117,7 +5254,8 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
         inm = it["name"]
         st.session_state[mat_key][inm] = {
             "p1": float(it["default_p1"]),
-            "p2": float(it["default_p2"])
+            "p2": float(it["default_p2"]),
+            "selected": True
         }
       st.success("✅ បានកំណត់តម្លៃទំនិញទាំងអស់មកតាមតម្លៃគោលលំនាំដើមវិញ!")
       st.rerun()
@@ -5133,7 +5271,7 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
       if not val_name:
         st.error("⚠️ សូមវាយបញ្ចូលឈ្មោះអ្នកផ្គត់ផ្គង់!")
       elif not is_commune_level and not tgt_school:
-        st.error("⚠️ សូមជ្រើសរើស ឬវាយបញ្ចូលឈ្មោះសាលារៀនគោលដៅ!")
+        st.error("⚠️ សូមធីកជ្រើសរើសយ៉ាងហោចណាស់សាលារៀន ១ សម្រាប់អ្នកផ្គត់ផ្គង់នេះ!")
       else:
         final_sig_data = uploaded_sig_data if uploaded_sig_data is not None else (existing_sig_val or "")
         sup_lvl_str = "commune" if is_commune_level else "school"
@@ -5150,6 +5288,7 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
             target_commune=tgt_commune,
             target_district=tgt_district,
             target_province=tgt_province,
+            gender=val_gender,
             supplier_id=cur_sup["id"] if cur_sup else None
         )
         saved_prods_count = save_all_supplier_prices(
@@ -5161,7 +5300,7 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
             target_district=tgt_district,
             target_province=tgt_province
         )
-        st.success(f"🎉 បានរក្សាទុកអ្នកផ្គត់ផ្គង់ «{val_name}» និងតម្លៃទំនិញចំនួន {saved_prods_count} មុខដោយជោគជ័យ!")
+        st.success(f"🎉 បានរក្សាទុកអ្នកផ្គត់ផ្គង់ «{val_name}» ({val_gender}) និងមុខទំនិញដែលបានជ្រើសយកចំនួន {saved_prods_count} មុខដោយជោគជ័យ!")
         st.rerun()
 
   # ----------------- TAB 3: នាំចូលអ្នកផ្គត់ផ្គង់ពីក្រៅ -----------------
