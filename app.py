@@ -256,6 +256,7 @@ def init_db():
         province TEXT,
         village TEXT
     )""")
+  cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_schools_name_commune ON schools(name, commune)")
 
   # Upgrade schema schools បើខ្វះ column
   cursor.execute("PRAGMA table_info(schools)")
@@ -6639,8 +6640,6 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
       elif not rec_item:
         st.error("សូមជ្រើសរើស ឬវាយបញ្ចូលមុខទំនិញ!")
       else:
-        save_school(chosen_school, chosen_commune)
-
         if (
             rec_item_sel == "➕ វាយបញ្ចូលមុខទំនិញថ្មី..."
             and chosen_commune

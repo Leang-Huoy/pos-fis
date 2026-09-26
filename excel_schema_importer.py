@@ -747,8 +747,7 @@ def import_records_to_database(df_records, db_path="school_pos.db", target_table
                         (d_val, s_name, i_name, "វគ្គ១", q_val, u_val, tot_val, v_no, eat_d)
                     )
 
-                # បញ្ចូលឈ្មោះសាលាថ្មីក្នុង schools បើមិនទាន់មាន
-                c.execute("INSERT OR IGNORE INTO schools (name, commune) VALUES (?, ?)", (s_name, "ស្លែងស្ពាន"))
+                # Don't auto-insert school into schools table
                 imported_count += 1
 
         elif target_table == "purchases":
