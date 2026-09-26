@@ -3984,65 +3984,160 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
     with sub_t2:
       st.subheader("✏️ កែប្រែ ឬ 🗑️ លុបទីតាំងរដ្ឋបាល")
       all_locs = cursor.execute(
-          "SELECT id, province, district, commune, village FROM locations"
-          " ORDER BY id DESC"
+          "SELECT id, province, district, commune, village FROM locations ORDER BY id DESC"
       ).fetchall()
-      if all_locs:
-        loc_dict = {
-            f"ID {r[0]}: ខេត្ត {r[1]} > ស្រុក {r[2]} > ឃុំ {r[3]} >"
-            f" ភូមិ {r[4] or 'គ្មាន'}": r
-            for r in all_locs
-        }
-        loc_choice = st.selectbox(
-            "ជ្រើសរើសទីតាំងដើម្បីកែប្រែ ឬលុប",
-            list(loc_dict.keys()),
-            key="sel_loc_edit",
-        )
-        cur_loc = loc_dict[loc_choice]
 
-        c_ep, c_ed, c_ec, c_ev = st.columns(4)
-        with c_ep:
-          ed_p = st.text_input("ខេត្ត/ក្រុង", value=cur_loc[1], key="ed_p")
-        with c_ed:
-          ed_d = st.text_input("ស្រុក/ខណ្ឌ", value=cur_loc[2], key="ed_d")
-        with c_ec:
-          ed_c = st.text_input("ឃុំ/សង្កាត់", value=cur_loc[3], key="ed_c")
-        with c_ev:
-          ed_v = st.text_input(
-              "ភូមិ", value=cur_loc[4] if cur_loc[4] else "", key="ed_v"
+      if all_locs:
+        del_loc_mode = st.radio(
+            "🎯 ជ្រើសរើសទម្រង់ប្រតិបត្តិការ៖",
+            ["☑️ ធិកជ្រើសរើសដើម្បីលុប (Bulk Checkbox)", "⚡ បញ្ជីជួរទីតាំង (ប៊ូតុង 🗑️ លុប នៅពីមុខ)", "✏️ កែប្រែព័ត៌មានទីតាំង"],
+            horizontal=True,
+            key="del_loc_mode_radio"
+        )
+
+        if del_loc_mode == "☑️ ធិកជ្រើសរើសដើម្បីលុប (Bulk Checkbox)":
+          st.markdown("##### ☑️ ធិកជ្រើសរើសទីតាំងដើម្បីលុបច្រើនក្នុងពេលតែមួយ")
+          f_col1, f_col2 = st.columns([2.5, 1.5])
+          with f_col1:
+            q_loc = st.text_input("🔍 ស្វែងរកទីតាំង (ខេត្ត ស្រុក ឃុំ ភូមិ)", key="search_loc_bulk").strip().lower()
+          with f_col2:
+            st.write("")
+            btn_sel_all = st.checkbox("☑️ ធិកជ្រើសរើសទាំងអស់", key="chk_all_locs")
+
+          filtered_locs = all_locs
+          if q_loc:
+            filtered_locs = [
+                r for r in all_locs if any(q_loc in str(field or "").lower() for field in [r[1], r[2], r[3], r[4]])
+            ]
+
+          df_loc_editor = pd.DataFrame({
+              "☑️ ជ្រើសរើសលុប": [btn_sel_all] * len(filtered_locs),
+              "ID": [r[0] for r in filtered_locs],
+              "ខេត្ត/ក្រុង": [r[1] or "" for r in filtered_locs],
+              "ស្រុក/ខណ្ឌ": [r[2] or "" for r in filtered_locs],
+              "ឃុំ/សង្កាត់": [r[3] or "" for r in filtered_locs],
+              "ភូមិ": [r[4] or "" for r in filtered_locs],
+          })
+
+          edited_loc_df = st.data_editor(
+              df_loc_editor,
+              disabled=["ID", "ខេត្ត/ក្រុង", "ស្រុក/ខណ្ឌ", "ឃុំ/សង្កាត់", "ភូមិ"],
+              hide_index=True,
+              use_container_width=True,
+              key="editor_loc_bulk_del"
           )
 
-        b_c1, b_c2 = st.columns(2)
-        with b_c1:
-          if st.button("💾 រក្សាទុកការកែប្រែទីតាំង", use_container_width=True):
-            if not ed_p.strip() or not ed_d.strip() or not ed_c.strip():
-              st.error("សូមកុំទុកឱ្យ ខេត្ត ស្រុក និងឃុំ ទទេ!")
-            else:
-              cursor.execute(
-                  "UPDATE locations SET province=?, district=?, commune=?,"
-                  " village=? WHERE id=?",
-                  (
-                      ed_p.strip(),
-                      ed_d.strip(),
-                      ed_c.strip(),
-                      ed_v.strip(),
-                      cur_loc[0],
-                  ),
-              )
+          chosen_loc_ids = edited_loc_df[edited_loc_df["☑️ ជ្រើសរើសលុប"] == True]["ID"].tolist()
+          if chosen_loc_ids:
+            st.warning(f"⚠️ អ្នកបានធិកជ្រើសរើសទីតាំងចំនួន **{len(chosen_loc_ids)}** ដើម្បីលុប។")
+            if st.button(f"🗑️ លុបទីតាំងដែលបានធិក ({len(chosen_loc_ids)} ទីតាំង)", type="primary", key="btn_confirm_bulk_del_loc"):
+              ph = ",".join(["?"] * len(chosen_loc_ids))
+              cursor.execute(f"DELETE FROM locations WHERE id IN ({ph})", chosen_loc_ids)
               conn.commit()
-              st.success("បានកែប្រែទីតាំងដោយជោគជ័យ!")
+              st.success(f"🎉 បានលុបទីតាំងចំនួន {len(chosen_loc_ids)} ដោយជោគជ័យ!")
               st.rerun()
 
-        with b_c2:
-          if st.button(
-              f"🗑️ លុបទីតាំង (ID: {cur_loc[0]})",
-              use_container_width=True,
-              type="primary",
-          ):
-            cursor.execute("DELETE FROM locations WHERE id=?", (cur_loc[0],))
-            conn.commit()
-            st.success(f"បានលុបទីតាំង ID {cur_loc[0]} ដោយជោគជ័យ!")
-            st.rerun()
+        elif del_loc_mode == "⚡ បញ្ជីជួរទីតាំង (ប៊ូតុង 🗑️ លុប នៅពីមុខ)":
+          st.markdown("##### ⚡ បញ្ជីជួរទីតាំងរដ្ឋបាល (មានប៊ូតុង 🗑️ លុប នៅពីមុខជួរនីមួយៗ)")
+          q_loc_row = st.text_input("🔍 ស្វែងរកទីតាំង...", key="search_loc_row").strip().lower()
+          filtered_loc_rows = all_locs
+          if q_loc_row:
+            filtered_loc_rows = [
+                r for r in all_locs if any(q_loc_row in str(field or "").lower() for field in [r[1], r[2], r[3], r[4]])
+            ]
+
+          st.caption(f"បង្ហាញទីតាំងចំនួន **{len(filtered_loc_rows)}**")
+
+          # Table Header
+          h_c1, h_c2, h_c3, h_c4, h_c5 = st.columns([1.2, 2.2, 2.2, 2.2, 2.2])
+          h_c1.markdown("**សកម្មភាព**")
+          h_c2.markdown("**ខេត្ត/ក្រុង**")
+          h_c3.markdown("**ស្រុក/ខណ្ឌ**")
+          h_c4.markdown("**ឃុំ/សង្កាត់**")
+          h_c5.markdown("**ភូមិ**")
+          st.divider()
+
+          page_size_loc = 25
+          total_pages_loc = max(1, (len(filtered_loc_rows) + page_size_loc - 1) // page_size_loc)
+          if total_pages_loc > 1:
+            p_col1, _ = st.columns([1.5, 4.5])
+            with p_col1:
+              loc_page = st.number_input("ទំព័រទី", min_value=1, max_value=total_pages_loc, value=1, key="num_page_loc")
+          else:
+            loc_page = 1
+
+          start_idx = (loc_page - 1) * page_size_loc
+          end_idx = start_idx + page_size_loc
+          page_loc_items = filtered_loc_rows[start_idx:end_idx]
+
+          for r in page_loc_items:
+            rc1, rc2, rc3, rc4, rc5 = st.columns([1.2, 2.2, 2.2, 2.2, 2.2])
+            with rc1:
+              if st.button("🗑️ លុប", key=f"btn_row_del_loc_{r[0]}", type="primary", use_container_width=True):
+                cursor.execute("DELETE FROM locations WHERE id=?", (r[0],))
+                conn.commit()
+                st.success(f"🗑️ បានលុបទីតាំង ID {r[0]} រួចរាល់!")
+                st.rerun()
+            with rc2: st.write(r[1] or "-")
+            with rc3: st.write(r[2] or "-")
+            with rc4: st.write(f"ឃុំ{r[3]}" if not str(r[3]).startswith("ឃុំ") else r[3])
+            with rc5: st.write(r[4] or "-")
+
+        else: # ✏️ កែប្រែព័ត៌មានទីតាំង
+          loc_dict = {
+              f"ID {r[0]}: ខេត្ត {r[1]} > ស្រុក {r[2]} > ឃុំ {r[3]} > ភូមិ {r[4] or 'គ្មាន'}": r
+              for r in all_locs
+          }
+          loc_choice = st.selectbox(
+              "ជ្រើសរើសទីតាំងដើម្បីកែប្រែ ឬលុប",
+              list(loc_dict.keys()),
+              key="sel_loc_edit",
+          )
+          cur_loc = loc_dict[loc_choice]
+
+          c_ep, c_ed, c_ec, c_ev = st.columns(4)
+          with c_ep:
+            ed_p = st.text_input("ខេត្ត/ក្រុង", value=cur_loc[1], key="ed_p")
+          with c_ed:
+            ed_d = st.text_input("ស្រុក/ខណ្ឌ", value=cur_loc[2], key="ed_d")
+          with c_ec:
+            ed_c = st.text_input("ឃុំ/សង្កាត់", value=cur_loc[3], key="ed_c")
+          with c_ev:
+            ed_v = st.text_input(
+                "ភូមិ", value=cur_loc[4] if cur_loc[4] else "", key="ed_v"
+            )
+
+          b_c1, b_c2 = st.columns(2)
+          with b_c1:
+            if st.button("💾 រក្សាទុកការកែប្រែទីតាំង", use_container_width=True):
+              if not ed_p.strip() or not ed_d.strip() or not ed_c.strip():
+                st.error("សូមកុំទុកឱ្យ ខេត្ត ស្រុក និងឃុំ ទទេ!")
+              else:
+                cursor.execute(
+                    "UPDATE locations SET province=?, district=?, commune=?,"
+                    " village=? WHERE id=?",
+                    (
+                        ed_p.strip(),
+                        ed_d.strip(),
+                        ed_c.strip(),
+                        ed_v.strip(),
+                        cur_loc[0],
+                    ),
+                )
+                conn.commit()
+                st.success("បានកែប្រែទីតាំងដោយជោគជ័យ!")
+                st.rerun()
+
+          with b_c2:
+            if st.button(
+                f"🗑️ លុបទីតាំង (ID: {cur_loc[0]})",
+                use_container_width=True,
+                type="primary",
+            ):
+              cursor.execute("DELETE FROM locations WHERE id=?", (cur_loc[0],))
+              conn.commit()
+              st.success(f"បានលុបទីតាំង ID {cur_loc[0]} ដោយជោគជ័យ!")
+              st.rerun()
       else:
         st.info("មិនទាន់មានទិន្នន័យទីតាំងក្នុងប្រព័ន្ធនៅឡើយទេ។")
 
@@ -4243,81 +4338,323 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
       st.subheader("✏️ កែប្រែ ឬ 🗑️ លុបសាលារៀន")
       all_schools_data = cursor.execute(
           "SELECT id, name, commune, district, province, village FROM schools"
-          " ORDER BY name"
+          " ORDER BY commune, name"
       ).fetchall()
       if all_schools_data:
-        sch_dict = {
-            f"ID {r[0]}: {r[1]} (ឃុំ {r[2]} | ស្រុក {r[3] or '-'} |"
-            f" ខេត្ត {r[4] or '-'})": r
-            for r in all_schools_data
-        }
-        sch_choice = st.selectbox(
-            "ជ្រើសរើសសាលាដើម្បីកែប្រែ ឬលុប",
-            list(sch_dict.keys()),
-            key="sel_sch_edit",
+        del_sch_mode = st.radio(
+            "🎯 ជ្រើសរើសទម្រង់ប្រតិបត្តិការ៖",
+            [
+                "☑️ ធិកជ្រើសរើសដើម្បីលុប (Bulk Checkbox)",
+                "⚡ បញ្ជីជួរឈ្មោះសាលា (ប៊ូតុង 🗑️ លុប នៅពីមុខ)",
+                "🧹 សម្អាតឈ្មោះសាលាស្ទួន (Remove Duplicates)",
+                "✏️ កែប្រែព័ត៌មានសាលារៀន",
+            ],
+            horizontal=True,
+            key="del_sch_mode_radio",
         )
-        cur_sch = sch_dict[sch_choice]
 
-        c_en, c_ec = st.columns([2, 1])
-        with c_en:
-          ed_sname = st.text_input(
-              "ឈ្មោះសាលារៀន", value=cur_sch[1], key="ed_sname"
-          )
-        with c_ec:
-          ed_scomm = st.text_input(
-              "ឃុំ/សង្កាត់", value=cur_sch[2], key="ed_scomm"
+        if del_sch_mode == "☑️ ធិកជ្រើសរើសដើម្បីលុប (Bulk Checkbox)":
+          st.markdown("##### ☑️ ធិកជ្រើសរើសសាលារៀនដើម្បីលុបច្រើនក្នុងពេលតែមួយ")
+          f_col1, f_col2, f_col3 = st.columns([1.5, 2, 1.2])
+          with f_col1:
+            comm_list = ["-- ទាំងអស់ --"] + sorted(
+                list(set(r[2] for r in all_schools_data if r[2]))
+            )
+            sel_comm = st.selectbox(
+                "🏘️ តម្រងតាមឃុំ/សង្កាត់", comm_list, key="bulk_sch_comm_filter"
+            )
+          with f_col2:
+            q_sch = st.text_input(
+                "🔍 ស្វែងរកឈ្មោះសាលា / ឃុំ / ស្រុក", key="search_sch_bulk"
+            ).strip().lower()
+          with f_col3:
+            st.write("")
+            btn_sel_all_sch = st.checkbox("☑️ ធិកជ្រើសរើសទាំងអស់", key="chk_all_schs")
+
+          filtered_schs = all_schools_data
+          if sel_comm != "-- ទាំងអស់ --":
+            filtered_schs = [r for r in filtered_schs if r[2] == sel_comm]
+          if q_sch:
+            filtered_schs = [
+                r
+                for r in filtered_schs
+                if any(
+                    q_sch in str(field or "").lower()
+                    for field in [r[1], r[2], r[3], r[4], r[5]]
+                )
+            ]
+
+          st.caption(f"រកឃើញសាលារៀនចំនួន **{len(filtered_schs)}**")
+
+          df_sch_editor = pd.DataFrame({
+              "☑️ ជ្រើសរើសលុប": [btn_sel_all_sch] * len(filtered_schs),
+              "ID": [r[0] for r in filtered_schs],
+              "ឈ្មោះសាលារៀន": [r[1] or "" for r in filtered_schs],
+              "ឃុំ/សង្កាត់": [r[2] or "" for r in filtered_schs],
+              "ស្រុក/ខណ្ឌ": [r[3] or "" for r in filtered_schs],
+              "ខេត្ត/ក្រុង": [r[4] or "" for r in filtered_schs],
+              "ភូមិ": [r[5] or "" for r in filtered_schs],
+          })
+
+          edited_sch_df = st.data_editor(
+              df_sch_editor,
+              disabled=[
+                  "ID",
+                  "ឈ្មោះសាលារៀន",
+                  "ឃុំ/សង្កាត់",
+                  "ស្រុក/ខណ្ឌ",
+                  "ខេត្ត/ក្រុង",
+                  "ភូមិ",
+              ],
+              hide_index=True,
+              use_container_width=True,
+              key="editor_sch_bulk_del",
           )
 
-        c_ep, c_ed, c_ev = st.columns(3)
-        with c_ep:
-          ed_sprov = st.text_input(
-              "ខេត្ត/ក្រុង",
-              value=cur_sch[4] if cur_sch[4] else "",
-              key="ed_sprov",
-          )
-        with c_ed:
-          ed_sdist = st.text_input(
-              "ស្រុក/ខណ្ឌ",
-              value=cur_sch[3] if cur_sch[3] else "",
-              key="ed_sdist",
-          )
-        with c_ev:
-          ed_svill = st.text_input(
-              "ភូមិ", value=cur_sch[5] if cur_sch[5] else "", key="ed_svill"
-          )
-
-        sb_c1, sb_c2 = st.columns(2)
-        with sb_c1:
-          if st.button("💾 រក្សាទុកការកែប្រែសាលា", use_container_width=True):
-            if not ed_sname.strip() or not ed_scomm.strip():
-              st.error("ឈ្មោះសាលា និង ឃុំ មិនអាចទុកឱ្យទទេបានទេ!")
-            else:
+          chosen_sch_ids = edited_sch_df[
+              edited_sch_df["☑️ ជ្រើសរើសលុប"] == True
+          ]["ID"].tolist()
+          if chosen_sch_ids:
+            st.warning(
+                f"⚠️ អ្នកបានធិកជ្រើសរើសសាលាចំនួន **{len(chosen_sch_ids)}**"
+                " ដើម្បីលុប។"
+            )
+            if st.button(
+                f"🗑️ លុបសាលាដែលបានធិក ({len(chosen_sch_ids)} សាលា)",
+                type="primary",
+                key="btn_confirm_bulk_del_sch",
+            ):
+              ph = ",".join(["?"] * len(chosen_sch_ids))
               cursor.execute(
-                  "UPDATE schools SET name=?, commune=?, district=?,"
-                  " province=?, village=? WHERE id=?",
-                  (
-                      ed_sname.strip(),
-                      ed_scomm.strip(),
-                      ed_sdist.strip(),
-                      ed_sprov.strip(),
-                      ed_svill.strip(),
-                      cur_sch[0],
-                  ),
+                  f"DELETE FROM schools WHERE id IN ({ph})", chosen_sch_ids
               )
               conn.commit()
-              st.success(f"បានកែប្រែព័ត៌មានសាលា ID {cur_sch[0]} ដោយជោគជ័យ!")
+              st.success(
+                  f"🎉 បានលុបសាលារៀនចំនួន {len(chosen_sch_ids)} ដោយជោគជ័យ!"
+              )
               st.rerun()
 
-        with sb_c2:
-          if st.button(
-              f"🗑️ លុបសាលានេះ (ID: {cur_sch[0]})",
-              use_container_width=True,
-              type="primary",
-          ):
-            cursor.execute("DELETE FROM schools WHERE id=?", (cur_sch[0],))
-            conn.commit()
-            st.success(f"បានលុបសាលារៀន ID {cur_sch[0]} រួចរាល់!")
-            st.rerun()
+        elif del_sch_mode == "⚡ បញ្ជីជួរឈ្មោះសាលា (ប៊ូតុង 🗑️ លុប នៅពីមុខ)":
+          st.markdown(
+              "##### ⚡ បញ្ជីជួរឈ្មោះសាលារៀន (មានប៊ូតុង 🗑️ លុប"
+              " នៅពីមុខជួរនីមួយៗ)"
+          )
+          f_col1, f_col2 = st.columns([1.5, 2.5])
+          with f_col1:
+            comm_list_row = ["-- ទាំងអស់ --"] + sorted(
+                list(set(r[2] for r in all_schools_data if r[2]))
+            )
+            sel_comm_row = st.selectbox(
+                "🏘️ តម្រងតាមឃុំ/សង្កាត់",
+                comm_list_row,
+                key="row_sch_comm_filter",
+            )
+          with f_col2:
+            q_sch_row = st.text_input(
+                "🔍 ស្វែងរកឈ្មោះសាលា / ឃុំ / ស្រុក...", key="search_sch_row"
+            ).strip().lower()
+
+          filtered_sch_rows = all_schools_data
+          if sel_comm_row != "-- ទាំងអស់ --":
+            filtered_sch_rows = [
+                r for r in filtered_sch_rows if r[2] == sel_comm_row
+            ]
+          if q_sch_row:
+            filtered_sch_rows = [
+                r
+                for r in filtered_sch_rows
+                if any(
+                    q_sch_row in str(field or "").lower()
+                    for field in [r[1], r[2], r[3], r[4], r[5]]
+                )
+            ]
+
+          st.caption(f"បង្ហាញសាលាចំនួន **{len(filtered_sch_rows)}**")
+
+          # Table Header
+          h_c1, h_c2, h_c3, h_c4, h_c5, h_c6 = st.columns(
+              [1.2, 3.0, 2.0, 1.8, 1.8, 1.5]
+          )
+          h_c1.markdown("**សកម្មភាព**")
+          h_c2.markdown("**ឈ្មោះសាលារៀន**")
+          h_c3.markdown("**ឃុំ/សង្កាត់**")
+          h_c4.markdown("**ស្រុក/ខណ្ឌ**")
+          h_c5.markdown("**ខេត្ត/ក្រុង**")
+          h_c6.markdown("**ភូមិ**")
+          st.divider()
+
+          page_size_sch = 30
+          total_pages_sch = max(
+              1, (len(filtered_sch_rows) + page_size_sch - 1) // page_size_sch
+          )
+          if total_pages_sch > 1:
+            p_col1, _ = st.columns([1.5, 4.5])
+            with p_col1:
+              sch_page = st.number_input(
+                  "ទំព័រទី",
+                  min_value=1,
+                  max_value=total_pages_sch,
+                  value=1,
+                  key="num_page_sch",
+              )
+          else:
+            sch_page = 1
+
+          start_idx = (sch_page - 1) * page_size_sch
+          end_idx = start_idx + page_size_sch
+          page_sch_items = filtered_sch_rows[start_idx:end_idx]
+
+          for r in page_sch_items:
+            rc1, rc2, rc3, rc4, rc5, rc6 = st.columns(
+                [1.2, 3.0, 2.0, 1.8, 1.8, 1.5]
+            )
+            with rc1:
+              if st.button(
+                  "🗑️ លុប",
+                  key=f"btn_row_del_sch_{r[0]}",
+                  type="primary",
+                  use_container_width=True,
+              ):
+                cursor.execute("DELETE FROM schools WHERE id=?", (r[0],))
+                conn.commit()
+                st.success(f"🗑️ បានលុបសាលា '{r[1]}' (ID {r[0]}) រួចរាល់!")
+                st.rerun()
+            with rc2:
+              st.write(f"**{r[1]}**")
+            with rc3:
+              st.write(
+                  f"ឃុំ{r[2]}" if not str(r[2]).startswith("ឃុំ") else r[2]
+              )
+            with rc4:
+              st.write(r[3] or "-")
+            with rc5:
+              st.write(r[4] or "-")
+            with rc6:
+              st.write(r[5] or "-")
+
+        elif del_sch_mode == "🧹 សម្អាតឈ្មោះសាលាស្ទួន (Remove Duplicates)":
+          st.markdown(
+              "##### 🧹 ឧបករណ៍សម្អាតទិន្នន័យឈ្មោះសាលាដែលស្ទួន (Duplicate"
+              " Cleanup)"
+          )
+          dup_count = cursor.execute(
+              "SELECT COUNT(*) FROM schools WHERE id NOT IN (SELECT MIN(id)"
+              " FROM schools GROUP BY TRIM(name), TRIM(commune))"
+          ).fetchone()[0]
+
+          if dup_count > 0:
+            st.warning(
+                f"⚠️ រកឃើញឈ្មោះសាលាដែលស្ទួនគ្នា (ឈ្មោះ និងឃុំដូចគ្នា) ចំនួន"
+                f" **{dup_count}** ជួរក្នុងប្រព័ន្ធ! "
+                "មុខងារនេះនឹងរក្សាទុកច្បាប់ដើមទី១ (Original) នៃសាលានីមួយៗ"
+                " ហើយលុបតែច្បាប់ចម្លងដែលស្ទួនចេញទាំងអស់។"
+            )
+            dup_preview = cursor.execute(
+                "SELECT name, commune, COUNT(*) as c FROM schools GROUP BY"
+                " TRIM(name), TRIM(commune) HAVING c > 1 ORDER BY c DESC"
+            ).fetchall()
+            if dup_preview:
+              st.markdown("**បញ្ជីសាលាដែលមានទិន្នន័យស្ទួនច្រើនជាងគេ៖**")
+              preview_df = pd.DataFrame({
+                  "ឈ្មោះសាលារៀន": [d[0] for d in dup_preview],
+                  "ឃុំ/សង្កាត់": [d[1] for d in dup_preview],
+                  "ចំនួនស្ទួន (ដង)": [d[2] for d in dup_preview],
+              })
+              st.dataframe(preview_df, hide_index=True, use_container_width=True)
+
+            if st.button(
+                f"🧹 សម្អាត និងលុបទិន្នន័យស្ទួនទាំងអស់ចេញ ({dup_count} ជួរ)",
+                type="primary",
+                key="btn_clean_duplicate_schools",
+            ):
+              cursor.execute(
+                  "DELETE FROM schools WHERE id NOT IN (SELECT MIN(id) FROM"
+                  " schools GROUP BY TRIM(name), TRIM(commune))"
+              )
+              conn.commit()
+              st.success(
+                  f"🎉 បានសម្អាតទិន្នន័យស្ទួនចំនួន {dup_count} ជួរដោយជោគជ័យ!"
+              )
+              st.rerun()
+          else:
+            st.success(
+                "✅ ទិន្នន័យសាលារៀនទាំងអស់ស្អាតល្អ មិនមានទិន្នន័យស្ទួន"
+                " (Duplicates) ឡើយ!"
+            )
+
+        else:
+          sch_dict = {
+              f"ID {r[0]}: {r[1]} (ឃុំ {r[2]} | ស្រុក {r[3] or '-'} |"
+              f" ខេត្ត {r[4] or '-'})": r
+              for r in all_schools_data
+          }
+          sch_choice = st.selectbox(
+              "ជ្រើសរើសសាលាដើម្បីកែប្រែ ឬលុប",
+              list(sch_dict.keys()),
+              key="sel_sch_edit",
+          )
+          cur_sch = sch_dict[sch_choice]
+
+          c_en, c_ec = st.columns([2, 1])
+          with c_en:
+            ed_sname = st.text_input(
+                "ឈ្មោះសាលារៀន", value=cur_sch[1], key="ed_sname"
+            )
+          with c_ec:
+            ed_scomm = st.text_input(
+                "ឃុំ/សង្កាត់", value=cur_sch[2], key="ed_scomm"
+            )
+
+          c_ep, c_ed, c_ev = st.columns(3)
+          with c_ep:
+            ed_sprov = st.text_input(
+                "ខេត្ត/ក្រុង",
+                value=cur_sch[4] if cur_sch[4] else "",
+                key="ed_sprov",
+            )
+          with c_ed:
+            ed_sdist = st.text_input(
+                "ស្រុក/ខណ្ឌ",
+                value=cur_sch[3] if cur_sch[3] else "",
+                key="ed_sdist",
+            )
+          with c_ev:
+            ed_svill = st.text_input(
+                "ភូមិ", value=cur_sch[5] if cur_sch[5] else "", key="ed_svill"
+            )
+
+          sb_c1, sb_c2 = st.columns(2)
+          with sb_c1:
+            if st.button("💾 រក្សាទុកការកែប្រែសាលា", use_container_width=True):
+              if not ed_sname.strip() or not ed_scomm.strip():
+                st.error("ឈ្មោះសាលា និង ឃុំ មិនអាចទុកឱ្យទទេបានទេ!")
+              else:
+                cursor.execute(
+                    "UPDATE schools SET name=?, commune=?, district=?,"
+                    " province=?, village=? WHERE id=?",
+                    (
+                        ed_sname.strip(),
+                        ed_scomm.strip(),
+                        ed_sdist.strip(),
+                        ed_sprov.strip(),
+                        ed_svill.strip(),
+                        cur_sch[0],
+                    ),
+                )
+                conn.commit()
+                st.success(f"បានកែប្រែព័ត៌មានសាលា ID {cur_sch[0]} ដោយជោគជ័យ!")
+                st.rerun()
+
+          with sb_c2:
+            if st.button(
+                f"🗑️ លុបសាលានេះ (ID: {cur_sch[0]})",
+                use_container_width=True,
+                type="primary",
+            ):
+              cursor.execute("DELETE FROM schools WHERE id=?", (cur_sch[0],))
+              conn.commit()
+              st.success(f"បានលុបសាលារៀន ID {cur_sch[0]} រួចរាល់!")
+              st.rerun()
       else:
         st.info("មិនទាន់មានទិន្នន័យសាលារៀនក្នុងប្រព័ន្ធនៅឡើយទេ។")
 
