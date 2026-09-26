@@ -4857,10 +4857,11 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
       "💡 គ្រប់គ្រងព័ត៌មានផ្ទាល់ខ្លួនអ្នកផ្គត់ផ្គង់, អាស័យដ្ឋាន, ហត្ថលេខា (ជាមួយប៊ូតុងលុបផ្ទៃខាងក្រោយ), ពត៌មានផ្គត់ផ្គង់ (កម្រិតឃុំ ឬសាលា) ព្រមទាំងកំណត់តម្លៃវគ្គ១/វគ្គ២ និងផ្ទៀងផ្ទាត់ធៀបនឹងតម្លៃគោលដោយស្វ័យប្រវត្តិ។"
   )
 
-  sup_tab1, sup_tab2, sup_tab3 = st.tabs([
+  sup_tab1, sup_tab2, sup_tab3, sup_tab4 = st.tabs([
       "📋 បញ្ជីអ្នកផ្គត់ផ្គង់ទាំងអស់",
       "➕ បន្ថែម / កែប្រែព័ត៌មាន & តម្លៃទំនិញ",
-      "📥 នាំចូលពីក្រៅ (Excel, CSV, Word, PDF)"
+      "📥 នាំចូលពីក្រៅ (Excel, CSV, Word, PDF)",
+      "📊 ឧបករណ៍វាយតម្លៃអ្នកផ្គត់ផ្គង់ (Supplier Evaluation)"
   ])
 
   # ----------------- TAB 1: បញ្ជីអ្នកផ្គត់ផ្គង់ទាំងអស់ -----------------
@@ -5581,6 +5582,580 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
               count_i += 1
           st.success(f"🎉 បាននាំចូលអ្នកផ្គត់ផ្គង់ចំនួន {count_i} ដោយជោគជ័យ!")
           st.rerun()
+
+  # ----------------- TAB 4: ឧបករណ៍វាយតម្លៃអ្នកផ្គត់ផ្គង់ (Supplier Evaluation) -----------------
+  with sup_tab4:
+    st.subheader("📊 ឧបករណ៍វាយតម្លៃអ្នកផ្គត់ផ្គង់ (Supplier Evaluation Matrix)")
+    st.info(
+        "💡 **គោលការណ៍គណនាស្វ័យប្រវត្តិតាមរូបមន្តកំណត់**៖ "
+        "អ្នកផ្គត់ផ្គង់ណាដែលដាក់តម្លៃទាបជាងគេលើ **«ទំនិញគោល»** (ស្បៀងគោល & បន្លែគោល) បានច្រើនមុខជាងគេ នឹងទទួលបានចំណាត់ថ្នាក់ជា **លេខ១** (✓ អ្នកផ្គត់ផ្គង់) "
+        "ហើយឈ្មោះ និងលទ្ធផលរបស់គាត់ត្រូវបានដាក់នៅមុខគេបង្អស់ (អ្នកស្នើថ្លៃ ១)។ អ្នកស្នើថ្លៃបន្ទាប់ នឹងត្រូវរៀបតាមលំដាប់ពិន្ទុ/ចំណាត់ថ្នាក់ជាបន្តបន្ទាប់។ "
+        "ចំណែក **«ស្បៀងបន្ថែម»** និង **«បន្លែបន្ថែម»** ត្រូវបានលើកលែងមិនរាប់បញ្ចូលក្នុងការគណនាកំណត់ចំណាត់ថ្នាក់ឡើយ។"
+    )
+
+    # Scoped styles matching the user's reference image
+    st.markdown("""
+    <style>
+    div[data-testid="stPopover"] > button {
+        background-color: #0891b2 !important;
+        color: #ffffff !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        padding: 5px 8px !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.06) !important;
+        transition: all 0.2s ease-in-out !important;
+        width: 100% !important;
+    }
+    div[data-testid="stPopover"] > button:hover {
+        background-color: #0e7490 !important;
+        color: #ffffff !important;
+        transform: translateY(-1px);
+        box-shadow: 0 3px 6px rgba(0,0,0,0.12) !important;
+    }
+    .eval-tbl-hdr {
+        background-color: #cfe2fe;
+        border: 1px solid #bfdbfe;
+        border-radius: 6px;
+        padding: 10px 8px;
+        font-weight: 700;
+        font-size: 15px;
+        color: #1e3a8a;
+        text-align: center;
+        margin-bottom: 8px;
+    }
+    .eval-pct-bar {
+        display: flex;
+        width: 100%;
+        border-radius: 4px;
+        overflow: hidden;
+        margin: 4px 0 6px 0;
+        font-size: 12px;
+        font-weight: 700;
+        height: 30px;
+        align-items: center;
+        text-align: center;
+        border: 1px solid rgba(0,0,0,0.04);
+    }
+    .pct-cell-yellow {
+        background-color: #fef08a;
+        color: #854d0e;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-right: 1px solid rgba(0,0,0,0.03);
+    }
+    .pct-cell-teal {
+        background-color: #ccfbf1;
+        color: #0f766e;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-right: 1px solid rgba(0,0,0,0.03);
+    }
+    .pct-cell-pink {
+        background-color: #fecdd3;
+        color: #be123c;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .status-pill-winner {
+        background-color: #16a34a;
+        color: #ffffff;
+        border-radius: 6px;
+        padding: 6px 12px;
+        font-weight: 700;
+        font-size: 13px;
+        text-align: center;
+        margin-bottom: 10px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    }
+    .status-pill-nonwinner {
+        background-color: #ffffff;
+        color: #475569;
+        border: 1.5px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 5px 12px;
+        font-weight: 600;
+        font-size: 13px;
+        text-align: center;
+        margin-bottom: 10px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Top Toolbar
+    eval_c1, eval_c2, eval_c3 = st.columns([1.5, 2.0, 1.5])
+    with eval_c1:
+      db_communes_rows = cursor.execute("SELECT DISTINCT commune FROM schools WHERE commune IS NOT NULL AND commune != '' ORDER BY commune").fetchall()
+      avail_communes = [r[0] for r in db_communes_rows] if db_communes_rows else ["ក្លាំងហាយ", "ស្លែងស្ពាន", "មោង"]
+      default_c_idx = avail_communes.index("ក្លាំងហាយ") if "ក្លាំងហាយ" in avail_communes else 0
+      sel_eval_com = st.selectbox("📍 ជ្រើសរើសឃុំ/សង្កាត់វាយតម្លៃ៖", avail_communes, index=default_c_idx, key="sel_eval_com_tab4")
+
+    with eval_c2:
+      eval_src_mode = st.radio(
+          "⚙️ ប្រភពទិន្នន័យវាយតម្លៃ៖",
+          ["✨ ទិន្នន័យគំរូជាក់ស្ដែង (Demo Bidders ដូចក្នុងរូបភាព)", "📊 គណនាស្វ័យប្រវត្តិតាម Database ជាក់ស្ដែង"],
+          horizontal=True,
+          key="eval_src_mode_tab4"
+      )
+
+    with eval_c3:
+      eval_price_kind = st.selectbox(
+          "📅 តម្លៃផ្ទៀងផ្ទាត់ធៀបនឹងតម្លៃគោល៖",
+          ["តម្លៃមធ្យម [(វគ្គ១+វគ្គ២)/2]", "តម្លៃវគ្គ១ (រដូវកាលទី១)", "តម្លៃវគ្គ២ (រដូវកាលទី២)"],
+          key="eval_price_kind_tab4"
+      )
+
+    def _render_eval_bar(pcts):
+      if not pcts or sum(pcts) == 0:
+        return "<div style='height: 30px; margin: 4px 0 6px 0;'></div>"
+      p1 = int(pcts[0]) if len(pcts) > 0 else 0
+      p2 = int(pcts[1]) if len(pcts) > 1 else 0
+      p3 = int(pcts[2]) if len(pcts) > 2 else 0
+      parts = []
+      if p1 > 0:
+        parts.append(f'<div class="pct-cell-yellow" style="flex: {p1};">{p1}%</div>')
+      if p2 > 0:
+        parts.append(f'<div class="pct-cell-teal" style="flex: {p2};">{p2}%</div>')
+      if p3 > 0:
+        parts.append(f'<div class="pct-cell-pink" style="flex: {p3};">{p3}%</div>')
+      return f'<div class="eval-pct-bar">{"".join(parts)}</div>'
+
+    # Filter catalog into core & extra items
+    core_catalog_items = [it for it in SUPPLIER_PRODUCT_CATALOG if it.get("group") in ["ស្បៀងគោល", "បន្លែគោល"]]
+    extra_catalog_items = [it for it in SUPPLIER_PRODUCT_CATALOG if it.get("group") in ["ស្បៀងបន្ថែម", "បន្លែបន្ថែម"]]
+
+    # Prepare schools list
+    if eval_src_mode.startswith("✨"):
+      # Exact schools from the user's screenshot
+      eval_schools = ["ល្បើក", "ក្លាំងហាយ", "គោកថ្កូវ"]
+    else:
+      sch_rows = cursor.execute("SELECT name FROM schools WHERE commune=? ORDER BY id ASC", (sel_eval_com,)).fetchall()
+      eval_schools = [r[0] for r in sch_rows] if sch_rows else ["ល្បើក", "ក្លាំងហាយ", "គោកថ្កូវ"]
+
+    # Table Header Row: ឈ្មោះសាលា | អ្នកស្នើថ្លៃ 1 | អ្នកស្នើថ្លៃ 2 | អ្នកស្នើថ្លៃ 3 | អ្នកស្នើថ្លៃ 4 | អ្នកស្នើថ្លៃ 5
+    st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+    th_sch, th_b1, th_b2, th_b3, th_b4, th_b5 = st.columns([1.1, 1.7, 1.7, 1.7, 1.7, 1.7])
+    with th_sch:
+      st.markdown('<div class="eval-tbl-hdr" style="text-align: left; padding-left: 12px;">ឈ្មោះសាលា</div>', unsafe_allow_html=True)
+    with th_b1:
+      st.markdown('<div class="eval-tbl-hdr">អ្នកស្នើថ្លៃ 1</div>', unsafe_allow_html=True)
+    with th_b2:
+      st.markdown('<div class="eval-tbl-hdr">អ្នកស្នើថ្លៃ 2</div>', unsafe_allow_html=True)
+    with th_b3:
+      st.markdown('<div class="eval-tbl-hdr">អ្នកស្នើថ្លៃ 3</div>', unsafe_allow_html=True)
+    with th_b4:
+      st.markdown('<div class="eval-tbl-hdr">អ្នកស្នើថ្លៃ 4</div>', unsafe_allow_html=True)
+    with th_b5:
+      st.markdown('<div class="eval-tbl-hdr">អ្នកស្នើថ្លៃ 5</div>', unsafe_allow_html=True)
+
+    # Handle Evaluation for each school
+    if eval_src_mode.startswith("✨"):
+      # 5 Demo Bidders matching user screenshot exactly
+      demo_bidders_template = [
+          {
+              "name": "មិញអេង",
+              "rank": 1,
+              "is_winner": True,
+              "core_pct": [42, 42, 15],
+              "extra_pct": None,
+              "lowest_cnt": "២៤ / ៣៤ មុខ (ច្រើនជាងគេ)",
+              "price_factor": 0.88,
+          },
+          {
+              "name": "សៀន សៃលិក",
+              "rank": 2,
+              "is_winner": False,
+              "core_pct": [58, 23, 19],
+              "extra_pct": [56, 33, 11],
+              "lowest_cnt": "១៨ / ៣៤ មុខ",
+              "price_factor": 0.94,
+          },
+          {
+              "name": "ឡាំ ហាក់",
+              "rank": 3,
+              "is_winner": False,
+              "core_pct": [65, 12, 23],
+              "extra_pct": [56, 33, 11],
+              "lowest_cnt": "១៥ / ៣៤ មុខ",
+              "price_factor": 0.97,
+          },
+          {
+              "name": "អៀង ហៀង",
+              "rank": 4,
+              "is_winner": False,
+              "core_pct": [35, 15, 50],
+              "extra_pct": [29, 71, 0],
+              "lowest_cnt": "១០ / ៣៤ មុខ",
+              "price_factor": 1.05,
+          },
+          {
+              "name": "ជឿន ខ្មៅ",
+              "rank": 5,
+              "is_winner": False,
+              "core_pct": [31, 31, 38],
+              "extra_pct": [65, 24, 12],
+              "lowest_cnt": "៨ / ៣៤ មុខ",
+              "price_factor": 1.08,
+          },
+      ]
+
+      for sch_name in eval_schools:
+        c_sch, c_b1, c_b2, c_b3, c_b4, c_b5 = st.columns([1.1, 1.7, 1.7, 1.7, 1.7, 1.7])
+        b_cols = [c_b1, c_b2, c_b3, c_b4, c_b5]
+
+        with c_sch:
+          st.markdown(f"""
+          <div style="padding-top: 8px;">
+              <div style="font-weight: 700; font-size: 16px; color: #1e293b; margin-bottom: 38px;">{sch_name}</div>
+              <div style="font-weight: 600; font-size: 14px; color: #475569; margin-bottom: 46px;">ទំនិញគោល <span style="color: #0284c7; cursor: pointer;" title="ស្បៀងគោល និងបន្លែគោល">ℹ</span></div>
+              <div style="font-weight: 600; font-size: 14px; color: #475569;">ទំនិញបន្ថែម <span style="color: #0284c7; cursor: pointer;" title="ស្បៀងបន្ថែម និងបន្លែបន្ថែម">ℹ</span></div>
+          </div>
+          """, unsafe_allow_html=True)
+
+        for b_idx, b in enumerate(demo_bidders_template):
+          with b_cols[b_idx]:
+            # Supplier Name
+            st.markdown(f'<div style="text-align: center; font-weight: 700; font-size: 15px; color: #1e293b; margin-bottom: 6px;">{b["name"]}</div>', unsafe_allow_html=True)
+
+            # Award / Status Pill Button
+            if b["is_winner"]:
+              st.markdown('<div class="status-pill-winner">✓ អ្នកផ្គត់ផ្គង់</div>', unsafe_allow_html=True)
+            else:
+              st.markdown('<div class="status-pill-nonwinner">✖ អ្នកផ្គត់ផ្គង់</div>', unsafe_allow_html=True)
+
+            # Row 1: Core items segmented bar + Teal Popover Button
+            st.markdown(_render_eval_bar(b["core_pct"]), unsafe_allow_html=True)
+            with st.popover("លម្អិតអំពីស្បៀង(គោល)", use_container_width=True):
+              st.markdown(f"#### 📋 ព័ត៌មានលម្អិតទំនិញគោល ៖ **{b['name']}**")
+              st.caption(f"🏫 សាលារៀន៖ **{sch_name}** | ឃុំ៖ **{sel_eval_com}** | 🏆 ចំណាត់ថ្នាក់៖ **លេខ {b['rank']}**")
+              st.markdown(f"🎯 **ចំនួនមុខទំនិញដែលថោកជាងគេបង្អស់៖** `{b['lowest_cnt']}`")
+              st.markdown(f"📊 **សមាមាត្រតម្លៃធៀបនឹងតម្លៃគោល៖** 🟡 ថោកជាងគេ {b['core_pct'][0]}% | 🟢 សមរម្យ {b['core_pct'][1]}% | 🔴 ខ្ពស់ {b['core_pct'][2]}%")
+
+              core_detail_rows = []
+              for itm_idx, it in enumerate(core_catalog_items, 1):
+                inm = it["name"]
+                unit = it["unit"]
+                base_p = get_catalog_base_price(inm, sch_name, sel_eval_com)
+                sup_p = round(base_p * b["price_factor"], -1)
+                best_p = round(base_p * 0.88, -1)
+                if sup_p <= best_p:
+                  stat_badge = "🟢 ថោកជាងគេ (Best)"
+                elif sup_p <= base_p:
+                  stat_badge = "🟡 សមរម្យ (< គោល)"
+                else:
+                  stat_badge = "🔴 ខ្ពស់ជាងគោល"
+
+                core_detail_rows.append({
+                    "ល.រ": itm_idx,
+                    "ឈ្មោះមុខទំនិញ": inm,
+                    "ឯកត្តា": unit,
+                    "តម្លៃគោល": f"{base_p:,.0f} ៛",
+                    f"តម្លៃ {b['name']}": f"{sup_p:,.0f} ៛",
+                    "តម្លៃទាបបំផុតក្នុងចំណោមគូប្រជែង": f"{best_p:,.0f} ៛",
+                    "ស្ថានភាពតម្លៃ": stat_badge
+                })
+              st.dataframe(pd.DataFrame(core_detail_rows), use_container_width=True, hide_index=True)
+
+            # Row 2: Extra items segmented bar + Teal Popover Button
+            if b["extra_pct"]:
+              st.markdown(_render_eval_bar(b["extra_pct"]), unsafe_allow_html=True)
+              with st.popover("លម្អិតអំពីស្បៀង(បន្ថែម)", use_container_width=True):
+                st.markdown(f"#### 📋 ព័ត៌មានលម្អិតទំនិញបន្ថែម ៖ **{b['name']}**")
+                st.caption(f"🏫 សាលារៀន៖ **{sch_name}** | ឃុំ៖ **{sel_eval_com}** *(លើកលែងមិនរាប់បញ្ចូលក្នុងចំណាត់ថ្នាក់)*")
+                st.markdown(f"📊 **សមាមាត្រតម្លៃបន្ថែម៖** 🟡 ថោក {b['extra_pct'][0]}% | 🟢 សមរម្យ {b['extra_pct'][1]}% | 🔴 ខ្ពស់ {b['extra_pct'][2]}%")
+
+                extra_detail_rows = []
+                for itm_idx, it in enumerate(extra_catalog_items, 1):
+                  inm = it["name"]
+                  unit = it["unit"]
+                  base_p = get_catalog_base_price(inm, sch_name, sel_eval_com)
+                  sup_p = round(base_p * (b["price_factor"] + 0.02), -1)
+                  best_p = round(base_p * 0.90, -1)
+                  stat_badge = "🟢 ថោកជាងគេ" if sup_p <= best_p else ("🟡 សមរម្យ" if sup_p <= base_p else "🔴 ខ្ពស់")
+                  extra_detail_rows.append({
+                      "ល.រ": itm_idx,
+                      "ឈ្មោះមុខទំនិញ": inm,
+                      "ឯកត្តា": unit,
+                      "តម្លៃគោល": f"{base_p:,.0f} ៛",
+                      f"តម្លៃ {b['name']}": f"{sup_p:,.0f} ៛",
+                      "ស្ថានភាព": stat_badge
+                  })
+                st.dataframe(pd.DataFrame(extra_detail_rows), use_container_width=True, hide_index=True)
+            else:
+              st.markdown("<div style='height: 68px;'></div>", unsafe_allow_html=True)
+
+        st.markdown('<hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 16px 0;">', unsafe_allow_html=True)
+
+    else:
+      # Live Database Calculation Engine
+      all_sups = get_all_suppliers()
+      rel_sups = []
+      for s in all_sups:
+        lvl = s["supply_level"]
+        if lvl == "commune" and (s["target_commune"] == sel_eval_com or s["commune"] == sel_eval_com):
+          rel_sups.append(s)
+        elif lvl == "district":
+          rel_sups.append(s)
+        elif lvl == "school":
+          if any(sch in (s["school_name"] or "") for sch in eval_schools) or s["commune"] == sel_eval_com:
+            rel_sups.append(s)
+
+      if len(rel_sups) < 2:
+        st.warning(
+            f"⚠️ នៅក្នុងឃុំ **«{sel_eval_com}»** រកឃើញអ្នកផ្គត់ផ្គង់ដែលបានចុះឈ្មោះចំនួន {len(rel_sups)} នាក់ប៉ុណ្ណោះ។ "
+            "ដើម្បីធ្វើការវាយតម្លៃ និងប្រកួតប្រជែងតម្លៃបានពេញលេញ សូមចុះឈ្មោះអ្នកផ្គត់ផ្គង់យ៉ាងតិច ២ នាក់ឡើងទៅ ឬប្រើប្រាស់ «✨ ទិន្នន័យគំរូជាក់ស្ដែង»។"
+        )
+      else:
+        # Evaluate for each school
+        for sch_name in eval_schools:
+          # Collect price maps for all competing suppliers
+          supplier_eval_records = []
+          for s in rel_sups:
+            s_name = s["supplier_name"]
+            p_rows = cursor.execute("""
+              SELECT item_name, price_phase1, price_phase2, price_avg 
+              FROM products 
+              WHERE supplier_name=? AND price_level='supplier'
+            """, (s_name,)).fetchall()
+            p_map = {}
+            for r in p_rows:
+              p_p1 = float(r[1] or 0)
+              p_p2 = float(r[2] or 0)
+              p_avg = float(r[3] or (p_p1 + p_p2)/2.0 if (p_p1+p_p2)>0 else 0)
+              if eval_price_kind.startswith("តម្លៃវគ្គ១"):
+                p_map[r[0]] = p_p1 if p_p1 > 0 else p_avg
+              elif eval_price_kind.startswith("តម្លៃវគ្គ២"):
+                p_map[r[0]] = p_p2 if p_p2 > 0 else p_avg
+              else:
+                p_map[r[0]] = p_avg
+            supplier_eval_records.append({
+                "supplier": s,
+                "name": s_name,
+                "prices": p_map
+            })
+
+          # Automatic Evaluation Rule: Lowest price on core items
+          for it in core_catalog_items:
+            inm = it["name"]
+            valid_prices = [rec["prices"].get(inm, 0) for rec in supplier_eval_records if rec["prices"].get(inm, 0) > 0]
+            if valid_prices:
+              min_core_p = min(valid_prices)
+              for rec in supplier_eval_records:
+                if rec["prices"].get(inm, 0) == min_core_p:
+                  rec["lowest_core_count"] = rec.get("lowest_core_count", 0) + 1
+
+          # Compute stats & percentages
+          for rec in supplier_eval_records:
+            rec["lowest_core_count"] = rec.get("lowest_core_count", 0)
+            rec["total_core_sum"] = sum(rec["prices"].get(it["name"], 0) for it in core_catalog_items)
+
+            # Core percentages
+            c_low, c_med, c_high = 0, 0, 0
+            for it in core_catalog_items:
+              inm = it["name"]
+              bp = get_catalog_base_price(inm, sch_name, sel_eval_com)
+              sp = rec["prices"].get(inm, bp)
+              if sp < bp * 0.90 or sp == 0:
+                c_low += 1
+              elif sp > bp * 1.10:
+                c_high += 1
+              else:
+                c_med += 1
+            tot_c = max(1, len(core_catalog_items))
+            p_low = round((c_low / tot_c) * 100)
+            p_med = round((c_med / tot_c) * 100)
+            p_high = max(0, 100 - p_low - p_med)
+            rec["core_pct"] = [p_low, p_med, p_high]
+
+            # Extra percentages
+            e_low, e_med, e_high = 0, 0, 0
+            has_any_extra = False
+            for it in extra_catalog_items:
+              inm = it["name"]
+              if inm in rec["prices"] and rec["prices"][inm] > 0:
+                has_any_extra = True
+              bp = get_catalog_base_price(inm, sch_name, sel_eval_com)
+              sp = rec["prices"].get(inm, bp)
+              if sp < bp * 0.90:
+                e_low += 1
+              elif sp > bp * 1.10:
+                e_high += 1
+              else:
+                e_med += 1
+            tot_e = max(1, len(extra_catalog_items))
+            rec["has_extra"] = has_any_extra
+            rec["extra_pct"] = [round((e_low / tot_e) * 100), round((e_med / tot_e) * 100), max(0, 100 - round((e_low / tot_e) * 100) - round((e_med / tot_e) * 100))] if has_any_extra else None
+
+          # Sort descending by lowest_core_count, then ascending by total_core_sum
+          ranked_suppliers = sorted(supplier_eval_records, key=lambda r: (-r["lowest_core_count"], r["total_core_sum"]))
+
+          # Render row for this school
+          c_sch, c_b1, c_b2, c_b3, c_b4, c_b5 = st.columns([1.1, 1.7, 1.7, 1.7, 1.7, 1.7])
+          b_cols = [c_b1, c_b2, c_b3, c_b4, c_b5]
+
+          with c_sch:
+            st.markdown(f"""
+            <div style="padding-top: 8px;">
+                <div style="font-weight: 700; font-size: 16px; color: #1e293b; margin-bottom: 38px;">{sch_name}</div>
+                <div style="font-weight: 600; font-size: 14px; color: #475569; margin-bottom: 46px;">ទំនិញគោល <span style="color: #0284c7; cursor: pointer;" title="ស្បៀងគោល និងបន្លែគោល">ℹ</span></div>
+                <div style="font-weight: 600; font-size: 14px; color: #475569;">ទំនិញបន្ថែម <span style="color: #0284c7; cursor: pointer;" title="ស្បៀងបន្ថែម និងបន្លែបន្ថែម">ℹ</span></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+          for col_idx in range(5):
+            with b_cols[col_idx]:
+              if col_idx < len(ranked_suppliers):
+                cur_rec = ranked_suppliers[col_idx]
+                is_win = (col_idx == 0)
+                st.markdown(f'<div style="text-align: center; font-weight: 700; font-size: 15px; color: #1e293b; margin-bottom: 6px;">{cur_rec["name"]}</div>', unsafe_allow_html=True)
+
+                if is_win:
+                  st.markdown('<div class="status-pill-winner">✓ អ្នកផ្គត់ផ្គង់</div>', unsafe_allow_html=True)
+                else:
+                  st.markdown('<div class="status-pill-nonwinner">✖ អ្នកផ្គត់ផ្គង់</div>', unsafe_allow_html=True)
+
+                st.markdown(_render_eval_bar(cur_rec["core_pct"]), unsafe_allow_html=True)
+                with st.popover("លម្អិតអំពីស្បៀង(គោល)", use_container_width=True):
+                  st.markdown(f"#### 📋 ព័ត៌មានលម្អិតទំនិញគោល ៖ **{cur_rec['name']}**")
+                  st.caption(f"🏫 សាលារៀន៖ **{sch_name}** | 🏆 ចំណាត់ថ្នាក់៖ **លេខ {col_idx+1}**")
+                  st.markdown(f"🎯 **ចំនួនមុខទំនិញដែលថោកជាងគេបង្អស់៖** `{cur_rec['lowest_core_count']} / {len(core_catalog_items)} មុខ`")
+                  st.markdown(f"📊 **សមាមាត្រតម្លៃធៀបនឹងតម្លៃគោល៖** 🟡 ថោកជាងគេ {cur_rec['core_pct'][0]}% | 🟢 សមរម្យ {cur_rec['core_pct'][1]}% | 🔴 ខ្ពស់ {cur_rec['core_pct'][2]}%")
+
+                  c_rows = []
+                  for itm_idx, it in enumerate(core_catalog_items, 1):
+                    inm = it["name"]
+                    bp = get_catalog_base_price(inm, sch_name, sel_eval_com)
+                    sp = cur_rec["prices"].get(inm, bp)
+                    all_sp = [r["prices"].get(inm, 0) for r in ranked_suppliers if r["prices"].get(inm, 0) > 0]
+                    min_sp = min(all_sp) if all_sp else bp
+                    stat = "🟢 ថោកជាងគេ (Best)" if sp <= min_sp else ("🟡 សមរម្យ" if sp <= bp else "🔴 ខ្ពស់ជាងគោល")
+                    c_rows.append({
+                        "ល.រ": itm_idx,
+                        "ឈ្មោះមុខទំនិញ": inm,
+                        "ឯកត្តា": it["unit"],
+                        "តម្លៃគោល": f"{bp:,.0f} ៛",
+                        f"តម្លៃ {cur_rec['name']}": f"{sp:,.0f} ៛",
+                        "តម្លៃទាបបំផុតក្នុងចំណោមគូប្រជែង": f"{min_sp:,.0f} ៛",
+                        "ស្ថានភាពតម្លៃ": stat
+                    })
+                  st.dataframe(pd.DataFrame(c_rows), use_container_width=True, hide_index=True)
+
+                if cur_rec.get("has_extra") and cur_rec.get("extra_pct"):
+                  st.markdown(_render_eval_bar(cur_rec["extra_pct"]), unsafe_allow_html=True)
+                  with st.popover("លម្អិតអំពីស្បៀង(បន្ថែម)", use_container_width=True):
+                    st.markdown(f"#### 📋 ព័ត៌មានលម្អិតទំនិញបន្ថែម ៖ **{cur_rec['name']}**")
+                    st.caption(f"🏫 សាលារៀន៖ **{sch_name}** *(លើកលែងមិនរាប់បញ្ចូលក្នុងចំណាត់ថ្នាក់)*")
+                    e_rows = []
+                    for itm_idx, it in enumerate(extra_catalog_items, 1):
+                      inm = it["name"]
+                      bp = get_catalog_base_price(inm, sch_name, sel_eval_com)
+                      sp = cur_rec["prices"].get(inm, bp)
+                      e_rows.append({
+                          "ល.រ": itm_idx,
+                          "ឈ្មោះមុខទំនិញ": inm,
+                          "ឯកត្តា": it["unit"],
+                          "តម្លៃគោល": f"{bp:,.0f} ៛",
+                          f"តម្លៃ {cur_rec['name']}": f"{sp:,.0f} ៛",
+                          "ស្ថានភាព": "🟢 ថោកជាងគេ" if sp < bp * 0.90 else ("🟡 សមរម្យ" if sp <= bp * 1.10 else "🔴 ខ្ពស់")
+                      })
+                    st.dataframe(pd.DataFrame(e_rows), use_container_width=True, hide_index=True)
+                else:
+                  st.markdown("<div style='height: 68px;'></div>", unsafe_allow_html=True)
+              else:
+                st.markdown("<div style='text-align: center; color: #94a3b8; padding-top: 30px;'>- គ្មានអ្នកស្នើថ្លៃ -</div>", unsafe_allow_html=True)
+
+          st.markdown('<hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 16px 0;">', unsafe_allow_html=True)
+
+    # Side-by-side Full Matrix Comparison Expander
+    st.divider()
+    with st.expander("📊 មើលតារាងប្រៀបធៀបតម្លៃមុខទំនិញទាំងអស់ទល់មុខគ្នា (Side-by-Side Comparison Matrix)", expanded=False):
+      st.markdown("##### 🔍 តារាងផ្ទៀងផ្ទាត់តម្លៃលម្អិតមុខទំនិញទាំង ៦១ មុខ (ទំនិញគោល & ទំនិញបន្ថែម)")
+      st.caption("រៀបចំប្រៀបធៀបតម្លៃអ្នកស្នើថ្លៃទាំងអស់ ដើម្បីផ្ទៀងផ្ទាត់តម្លាភាពក្នុងការដេញថ្លៃ")
+
+      all_comp_rows = []
+      comp_names = ["មិញអេង", "សៀន សៃលិក", "ឡាំ ហាក់", "អៀង ហៀង", "ជឿន ខ្មៅ"]
+      factor_map = {"មិញអេង": 0.88, "សៀន សៃលិក": 0.94, "ឡាំ ហាក់": 0.97, "អៀង ហៀង": 1.05, "ជឿន ខ្មៅ": 1.08}
+
+      for idx_it, it in enumerate(SUPPLIER_PRODUCT_CATALOG, 1):
+        inm = it["name"]
+        grp = it["group"]
+        unit = it["unit"]
+        bp = get_catalog_base_price(inm, eval_schools[0] if eval_schools else None, sel_eval_com)
+        row_dict = {
+            "ល.រ": idx_it,
+            "ឈ្មោះមុខទំនិញ": inm,
+            "ប្រភេទ": f"🌾 {grp}" if "ស្បៀង" in grp else f"🥦 {grp}",
+            "ឯកត្តា": unit,
+            "តម្លៃគោល (៛)": f"{bp:,.0f} ៛",
+        }
+        prices = {}
+        for snm in comp_names:
+          fac = factor_map.get(snm, 1.0)
+          sup_p = round(bp * fac, -1)
+          row_dict[f"{snm} (៛)"] = f"{sup_p:,.0f} ៛"
+          prices[snm] = sup_p
+
+        min_p = min(prices.values()) if prices else bp
+        best_sups = [s for s, p in prices.items() if p == min_p]
+        row_dict["តម្លៃទាបបំផុត (៛)"] = f"{min_p:,.0f} ៛"
+        row_dict["អ្នកស្នើថ្លៃទាបជាងគេ"] = f"🟢 {', '.join(best_sups)}"
+        all_comp_rows.append(row_dict)
+
+      st.dataframe(pd.DataFrame(all_comp_rows), use_container_width=True, hide_index=True)
+
+    # Seed demo bidders button for user convenience
+    col_sd1, col_sd2 = st.columns([3, 1.5])
+    with col_sd1:
+      st.caption("💡 ចុចប៊ូតុងខាងស្តាំដើម្បីរក្សាទុកអ្នកផ្គត់ផ្គង់គំរូទាំង ៥ នាក់ខាងលើ (មិញអេង, សៀន សៃលិក, ឡាំ ហាក់, អៀង ហៀង, ជឿន ខ្មៅ) ចូល Database ដោយស្វ័យប្រវត្តិ។")
+    with col_sd2:
+      if st.button("📥 បញ្ចូលអ្នកស្នើថ្លៃទាំង ៥ ចូល Database", use_container_width=True, key="btn_seed_eval_sups"):
+        seed_names = [
+            ("មិញអេង", "ស្រី", "092 112 233", "ល្បើក"),
+            ("សៀន សៃលិក", "ប្រុស", "097 554 321", "ក្លាំងហាយ"),
+            ("ឡាំ ហាក់", "ប្រុស", "012 889 900", "គោកថ្កូវ"),
+            ("អៀង ហៀង", "ប្រុស", "088 334 455", "ក្លាំងហាយ"),
+            ("ជឿន ខ្មៅ", "ស្រី", "010 445 566", "ល្បើក"),
+        ]
+        count_seeded = 0
+        for s_n, s_g, s_p, s_v in seed_names:
+          save_or_update_supplier(
+              school_name=",".join(eval_schools),
+              supplier_name=s_n,
+              village=s_v,
+              commune="ក្លាំងហាយ",
+              district="ស្រីស្នំ",
+              province="សៀមរាប",
+              phone=s_p,
+              supply_level="commune",
+              target_commune="ក្លាំងហាយ",
+              target_district="ស្រីស្នំ",
+              target_province="សៀមរាប",
+              gender=s_g
+          )
+          fac = factor_map.get(s_n, 1.0)
+          p_dict = {}
+          for it in SUPPLIER_PRODUCT_CATALOG:
+            b_p = it.get("base_avg", 0) or it.get("default_p1", 0)
+            calc_p = round(b_p * fac, -1)
+            p_dict[it["name"]] = {"p1": calc_p, "p2": calc_p, "selected": True}
+          save_all_supplier_prices(
+              supplier_name=s_n,
+              price_dict=p_dict,
+              supply_level="commune",
+              target_commune="ក្លាំងហាយ",
+              target_district="ស្រីស្នំ",
+              target_province="សៀមរាប"
+          )
+          count_seeded += 1
+        st.success(f"🎉 បានរក្សាទុកអ្នកផ្គត់ផ្គង់គំរូទាំង {count_seeded} នាក់ និងទិន្នន័យតម្លៃចូល Database ដោយជោគជ័យ!")
+        st.rerun()
 
 
 # ================= ៤. បញ្ជីគ្រប់គ្រងទំនិញ និងតម្លៃ (Admin Benchmark Matrix) =================
