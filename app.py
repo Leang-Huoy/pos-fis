@@ -13,6 +13,7 @@ from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
 import streamlit as st
 import excel_schema_importer as esi
+from catalog_data import SUPPLIER_PRODUCT_CATALOG
 
 # កំណត់ទំព័រ Interface
 st.set_page_config(
@@ -426,6 +427,14 @@ def init_db():
   sup_cols = [c[1] for c in cursor.fetchall()]
   if "supplied_categories" not in sup_cols:
     cursor.execute("ALTER TABLE suppliers ADD COLUMN supplied_categories TEXT DEFAULT ''")
+  if "supply_level" not in sup_cols:
+    cursor.execute("ALTER TABLE suppliers ADD COLUMN supply_level TEXT DEFAULT 'school'")
+  if "target_commune" not in sup_cols:
+    cursor.execute("ALTER TABLE suppliers ADD COLUMN target_commune TEXT DEFAULT ''")
+  if "target_district" not in sup_cols:
+    cursor.execute("ALTER TABLE suppliers ADD COLUMN target_district TEXT DEFAULT ''")
+  if "target_province" not in sup_cols:
+    cursor.execute("ALTER TABLE suppliers ADD COLUMN target_province TEXT DEFAULT ''")
 
   cursor.execute("""
     UPDATE suppliers 
@@ -514,38 +523,253 @@ def get_supplier_for_school(school_name):
   }
 
 
+class SupplierRow(dict):
+  """រចនាសម្ព័ន្ធទិន្នន័យអ្នកផ្គត់ផ្គង់ដែលគាំទ្រទាំង Tuple Index [0] និង Dictionary Key ['supplier_name']"""
+  def __init__(self, t):
+    keys = [
+        "id", "school_name", "supplier_name", "village", "commune", "district", "province",
+        "phone", "signature_data", "supplied_categories", "supply_level",
+        "target_commune", "target_district", "target_province"
+    ]
+    d = {k: (t[i] if i < len(t) and t[i] is not None else "") for i, k in enumerate(keys)}
+    super().__init__(d)
+    self._tuple = list(t)
+
+  def __getitem__(self, item):
+    if isinstance(item, int):
+      return self._tuple[item] if item < len(self._tuple) else None
+    return super().__getitem__(item)
+
+
 def get_all_suppliers():
   """ទាញយកបញ្ជីអ្នកផ្គត់ផ្គង់ទាំងអស់"""
-  return cursor.execute("""
-    SELECT id, school_name, supplier_name, village, commune, district, province, phone, signature_data, supplied_categories
+  cursor.execute("""
+    SELECT id, school_name, supplier_name, village, commune, district, province, phone, signature_data, supplied_categories,
+           COALESCE(supply_level, 'school') as supply_level,
+           COALESCE(target_commune, '') as target_commune,
+           COALESCE(target_district, '') as target_district,
+           COALESCE(target_province, '') as target_province
     FROM suppliers
     ORDER BY id DESC
-  """).fetchall()
+  """)
+  return [SupplierRow(r) for r in cursor.fetchall()]
 
 
-def save_or_update_supplier(school_name, supplier_name, village, commune, district, province, phone, signature_data=None, supplied_categories=None):
-  """រក្សាទុក ឬកែប្រែអ្នកផ្គត់ផ្គង់តាមសាលា"""
-  existing = cursor.execute("SELECT id, signature_data, supplied_categories FROM suppliers WHERE school_name=? AND supplier_name=?", (school_name, supplier_name)).fetchone()
-  if existing:
-    sig = signature_data if signature_data is not None else existing[1]
-    sc = supplied_categories if supplied_categories is not None else (existing[2] or "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ")
-    cursor.execute("""
-      UPDATE suppliers 
-      SET village=?, commune=?, district=?, province=?, phone=?, signature_data=?, supplied_categories=?
-      WHERE id=?
-    """, (village, commune, district, province, phone, sig, sc, existing[0]))
+def save_or_update_supplier(
+    school_name,
+    supplier_name,
+    village,
+    commune,
+    district,
+    province,
+    phone,
+    signature_data=None,
+    supplied_categories=None,
+    supply_level="school",
+    target_commune="",
+    target_district="",
+    target_province="",
+    supplier_id=None
+):
+  """រក្សាទុក ឬកែប្រែអ្នកផ្គត់ផ្គង់តាមសាលា ឬតាមឃុំ"""
+  sc = supplied_categories or "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ"
+  if supplier_id:
+    if signature_data is not None:
+      cursor.execute("""
+        UPDATE suppliers 
+        SET school_name=?, supplier_name=?, village=?, commune=?, district=?, province=?, phone=?,
+            signature_data=?, supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?
+        WHERE id=?
+      """, (school_name, supplier_name, village, commune, district, province, phone, signature_data, sc, supply_level, target_commune, target_district, target_province, supplier_id))
+    else:
+      cursor.execute("""
+        UPDATE suppliers 
+        SET school_name=?, supplier_name=?, village=?, commune=?, district=?, province=?, phone=?,
+            supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?
+        WHERE id=?
+      """, (school_name, supplier_name, village, commune, district, province, phone, sc, supply_level, target_commune, target_district, target_province, supplier_id))
+    conn.commit()
+    return supplier_id
   else:
-    cursor.execute("""
-      INSERT INTO suppliers (school_name, supplier_name, village, commune, district, province, phone, signature_data, supplied_categories)
-      VALUES (?,?,?,?,?,?,?,?,?)
-    """, (school_name, supplier_name, village, commune, district, province, phone, signature_data or "", supplied_categories or "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ"))
-  conn.commit()
+    # Check if exists by name & school/commune
+    existing = cursor.execute("""
+      SELECT id FROM suppliers 
+      WHERE supplier_name=? AND (school_name=? OR (school_name='' AND target_commune=?))
+    """, (supplier_name, school_name, target_commune)).fetchone()
+    if existing:
+      s_id = existing[0]
+      cursor.execute("""
+        UPDATE suppliers 
+        SET school_name=?, village=?, commune=?, district=?, province=?, phone=?,
+            signature_data=COALESCE(?, signature_data), supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?
+        WHERE id=?
+      """, (school_name, village, commune, district, province, phone, signature_data, sc, supply_level, target_commune, target_district, target_province, s_id))
+      conn.commit()
+      return s_id
+    else:
+      cursor.execute("""
+        INSERT INTO suppliers (
+          school_name, supplier_name, village, commune, district, province, phone,
+          signature_data, supplied_categories, supply_level, target_commune, target_district, target_province
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      """, (school_name, supplier_name, village, commune, district, province, phone, signature_data or "", sc, supply_level, target_commune, target_district, target_province))
+      conn.commit()
+      return cursor.lastrowid
 
 
 def delete_supplier(supplier_id):
   """លុបអ្នកផ្គត់ផ្គង់តាម ID"""
   cursor.execute("DELETE FROM suppliers WHERE id=?", (supplier_id,))
   conn.commit()
+
+
+def get_catalog_base_price(item_name, school_name=None, commune=None):
+  """
+  ស្វែងរកតម្លៃគោលនៃមុខទំនិញ៖
+  ១. ពិនិត្យមើលតម្លៃគោលក្នុង products (price_level='school' ឬ 'commune')
+  ២. ប្រសិនបើគ្មាន ប្រើប្រាស់តម្លៃ base_avg ពី SUPPLIER_PRODUCT_CATALOG (ឯកសារ Excel)
+  """
+  if school_name:
+    try:
+      row = cursor.execute(
+          "SELECT price_avg, price_phase1 FROM products WHERE item_name=? AND school_name=? AND price_level='school'",
+          (item_name, school_name)
+      ).fetchone()
+      if row and (row[0] or row[1]):
+        return float(row[0] or row[1])
+    except Exception:
+      pass
+  if commune:
+    try:
+      row = cursor.execute(
+          "SELECT price_avg, price_phase1 FROM products WHERE item_name=? AND commune=? AND (price_level='commune' OR school_name IS NULL OR school_name='')",
+          (item_name, commune)
+      ).fetchone()
+      if row and (row[0] or row[1]):
+        return float(row[0] or row[1])
+    except Exception:
+      pass
+  
+  for it in SUPPLIER_PRODUCT_CATALOG:
+    if it["name"].strip() == item_name.strip():
+      return float(it.get("base_avg", 0) or it.get("default_p1", 0))
+  return 0.0
+
+
+def evaluate_supplier_price_status(avg_price, base_price):
+  """
+  គណនាស្ថានភាពប្រៀបធៀបតម្លៃមធ្យម ទៅនឹងតម្លៃគោល៖
+  - ខ្ពស់ជាងតម្លៃគោល 10% (> +10%): ពណ៌ក្រហម (#fee2e2, border #ef4444, text #991b1b)
+  - ទាបជាងតម្លៃគោល 10% (< -10%): ពណ៌លឿង (#fef9c3, border #eab308, text #854d0e)
+  - ស្ថិតនៅចន្លោះតម្លៃគោល ±10%: ពណ៌ត្រួយចេក (#ecfccb, border #84cc16, text #365314)
+  """
+  if not base_price or base_price <= 0:
+    return {
+        "status": "normal",
+        "diff_pct": 0.0,
+        "bg_color": "#f8fafc",
+        "border_color": "#cbd5e1",
+        "text_color": "#334155",
+        "badge_text": "⚪ គ្មានតម្លៃគោលកំណត់",
+        "badge_class": "badge-neutral"
+    }
+
+  upper_limit = base_price * 1.10
+  lower_limit = base_price * 0.90
+  diff_pct = ((avg_price - base_price) / base_price) * 100.0
+
+  if avg_price > upper_limit:
+    return {
+        "status": "high",
+        "diff_pct": diff_pct,
+        "bg_color": "#fee2e2",
+        "border_color": "#ef4444",
+        "text_color": "#991b1b",
+        "badge_text": f"🔴 ថ្លៃជាងតម្លៃគោល ១០%+ (+{diff_pct:.1f}%)",
+        "badge_class": "badge-red"
+    }
+  elif avg_price < lower_limit:
+    return {
+        "status": "low",
+        "diff_pct": diff_pct,
+        "bg_color": "#fef9c3",
+        "border_color": "#eab308",
+        "text_color": "#854d0e",
+        "badge_text": f"🟡 ថោកជាងតម្លៃគោល ១០%+ ({diff_pct:.1f}%)",
+        "badge_class": "badge-yellow"
+    }
+  else:
+    sign = "+" if diff_pct > 0 else ""
+    return {
+        "status": "normal_lime",
+        "diff_pct": diff_pct,
+        "bg_color": "#ecfccb",
+        "border_color": "#84cc16",
+        "text_color": "#365314",
+        "badge_text": f"🟢 ត្រួយចេក សមស្រប (±១០%) [{sign}{diff_pct:.1f}%]",
+        "badge_class": "badge-lime"
+    }
+
+
+def get_supplier_prices_map(supplier_name):
+  """ទាញយកតម្លៃទំនិញដែលបានកំណត់របស់អ្នកផ្គត់ផ្គង់ពីតារាង products"""
+  res = {}
+  if not supplier_name:
+    return res
+  try:
+    rows = cursor.execute("""
+      SELECT item_name, price_phase1, price_phase2, price_avg
+      FROM products
+      WHERE supplier_name=? AND price_level='supplier'
+    """, (supplier_name,)).fetchall()
+    for r in rows:
+      res[r[0]] = {
+          "p1": float(r[1] or 0),
+          "p2": float(r[2] or 0),
+          "avg": float(r[3] or 0)
+      }
+  except Exception:
+    pass
+  return res
+
+
+def save_all_supplier_prices(supplier_name, price_dict, supply_level="school", target_school="", target_commune="", target_district="", target_province=""):
+  """រក្សាទុកតម្លៃទំនិញទាំងអស់សម្រាប់អ្នកផ្គត់ផ្គង់នេះ"""
+  saved_count = 0
+  for it in SUPPLIER_PRODUCT_CATALOG:
+    name = it["name"]
+    category = it["category"]
+    p_info = price_dict.get(name, {"p1": it["default_p1"], "p2": it["default_p2"]})
+    p1 = float(p_info.get("p1", it["default_p1"]))
+    p2 = float(p_info.get("p2", it["default_p2"]))
+    avg_p = round((p1 + p2) / 2.0, 2)
+    sch_col = target_school if supply_level == "school" else ""
+    com_col = target_commune
+
+    existing = cursor.execute("""
+      SELECT id FROM products 
+      WHERE supplier_name=? AND item_name=? AND price_level='supplier'
+    """, (supplier_name, name)).fetchone()
+
+    if existing:
+      cursor.execute("""
+        UPDATE products 
+        SET price_phase1=?, price_phase2=?, price_avg=?, category=?, commune=?, district=?, province=?, school_name=?, price_level='supplier'
+        WHERE id=?
+      """, (p1, p2, avg_p, category, com_col, target_district, target_province, sch_col, existing[0]))
+    else:
+      cursor.execute("""
+        INSERT INTO products (
+          item_name, commune, district, province, school_name,
+          price_phase1, price_phase2, price_avg, category,
+          price_level, supplier_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'supplier', ?)
+      """, (name, com_col, target_district, target_province, sch_col, p1, p2, avg_p, category, supplier_name))
+    saved_count += 1
+
+  conn.commit()
+  return saved_count
+
 
 
 def file_to_base64_img(uploaded_file):
@@ -3452,7 +3676,7 @@ menu = st.sidebar.radio(
     [
         "📊 Dashboard",
         "📍 គ្រប់គ្រងទីតាំង និងសាលារៀន",
-        "🚚 គ្រប់គ្រងអ្នកផ្គត់ផ្គង់តាមសាលា",
+        "🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្គត់ផ្គង់",
         "📦 បញ្ជីមុខទំនិញ និងតម្លៃ (តាមសាលា / តាមឃុំ)",
         "📝 កត់ត្រា និងចេញវិក្កយបត្រប្រចាំថ្ងៃ",
         "📑 សំណើទូទាត់ប្រចាំខែ",
@@ -4023,248 +4247,425 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
         add_row_numbers(df_sch), use_container_width=True, hide_index=True
     )
 
-# ================= ៣. គ្រប់គ្រងអ្នកផ្គត់ផ្គង់តាមសាលារៀន =================
-elif menu == "🚚 គ្រប់គ្រងអ្នកផ្គត់ផ្គង់តាមសាលា":
-  st.title("🚚 គ្រប់គ្រងឈ្មោះអ្នកផ្គត់ផ្គង់ទៅតាមសាលារៀន (School Suppliers)")
+# ================= ៣. បញ្ជីគ្រប់គ្រងអ្នកផ្គត់ផ្គង់ =================
+elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្គត់ផ្គង់", "🚚 គ្រប់គ្រងអ្នកផ្គត់ផ្គង់តាមសាលា", "🚚 គ្រប់គ្រងអ្នកផ្គត់ផ្គង់"]:
+  st.title("🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្គត់ផ្គង់ និងកំណត់តម្លៃទំនិញ")
   st.info(
-      "💡 គ្រប់គ្រងព័ត៌មានអ្នកផ្គត់ផ្គង់ស្បៀងទៅកាន់សាលានីមួយៗ រួមមាន៖ ឈ្មោះ អាសយដ្ឋាន (ភូមិ ឃុំ ស្រុក ខេត្ត) លេខទូរស័ព្ទ និងហត្ថលេខា សម្រាប់ភ្ជាប់ស្វ័យប្រវត្តិក្នុវិក្កយបត្រ (ឧបសម្ពន្ធ ៣) និងសំណើទូទាត់ប្រចាំខែ"
+      "💡 គ្រប់គ្រងព័ត៌មានផ្ទាល់ខ្លួនអ្នកផ្គត់ផ្គង់, អាស័យដ្ឋាន, ហត្ថលេខា (ជាមួយប៊ូតុងលុបផ្ទៃខាងក្រោយ), ពត៌មានផ្គត់ផ្គង់ (កម្រិតឃុំ ឬសាលា) ព្រមទាំងកំណត់តម្លៃវគ្គ១/វគ្គ២ និងផ្ទៀងផ្ទាត់ធៀបនឹងតម្លៃគោលដោយស្វ័យប្រវត្តិ។"
   )
 
-  sup_tab1, sup_tab2, sup_tab3, sup_tab4 = st.tabs([
+  sup_tab1, sup_tab2, sup_tab3 = st.tabs([
       "📋 បញ្ជីអ្នកផ្គត់ផ្គង់ទាំងអស់",
-      "➕ បន្ថែមអ្នកផ្គត់ផ្គង់ថ្មី",
-      "✏️ កែប្រែ / លុបអ្នកផ្គត់ផ្គង់",
-      "📥 នាំចូលពីក្រៅ (Excel, Word, CSV, PDF, រូបភាព)"
+      "➕ បន្ថែម / កែប្រែព័ត៌មាន & តម្លៃទំនិញ",
+      "📥 នាំចូលពីក្រៅ (Excel, CSV, Word, PDF)"
   ])
 
-  # ----------------- TAB 1: បញ្ជីអ្នកផ្គត់ផ្គង់ -----------------
+  # ----------------- TAB 1: បញ្ជីអ្នកផ្គត់ផ្គង់ទាំងអស់ -----------------
   with sup_tab1:
-    st.subheader("📋 បញ្ជីអ្នកផ្គត់ផ្គង់ស្បៀងតាមសាលារៀន")
+    st.subheader("📋 បញ្ជីអ្នកផ្គត់ផ្គង់ស្បៀងទាំងអស់ក្នុងប្រព័ន្ធ")
     all_sups = get_all_suppliers()
     if all_sups:
-      sup_df = pd.DataFrame(all_sups, columns=[
-          "ID", "សាលារៀន", "ឈ្មោះអ្នកផ្គត់ផ្គង់", "ភូមិ", "ឃុំ/សង្កាត់", "ក្រុង/ស្រុក", "ខេត្ត", "លេខទូរស័ព្ទ", "ហត្ថលេខា", "មុខទំនិញផ្គត់ផ្គង់"
-      ])
-      def build_full_addr(row):
-        parts = []
-        if row["ភូមិ"]: parts.append(str(row["ភូមិ"]))
-        if row["ឃុំ/សង្កាត់"]: parts.append(f"ឃុំ{row['ឃុំ/សង្កាត់']}" if not str(row["ឃុំ/សង្កាត់"]).startswith("ឃុំ") else str(row["ឃុំ/សង្កាត់"]))
-        if row["ក្រុង/ស្រុក"]: parts.append(f"ស្រុក{row['ក្រុង/ស្រុក']}" if not str(row["ក្រុង/ស្រុក"]).startswith("ស្រុក") and not str(row["ក្រុង/ស្រុក"]).startswith("ក្រុង") else str(row["ក្រុង/ស្រុក"]))
-        if row["ខេត្ត"]: parts.append(f"ខេត្ត{row['ខេត្ត']}" if not str(row["ខេត្ត"]).startswith("ខេត្ត") else str(row["ខេត្ត"]))
-        return " ".join(parts) if parts else "-"
+      sup_display_list = []
+      for s in all_sups:
+        addr_parts = []
+        if s["village"]: addr_parts.append(str(s["village"]))
+        if s["commune"]: addr_parts.append(f"ឃុំ{s['commune']}" if not str(s['commune']).startswith("ឃុំ") else str(s['commune']))
+        if s["district"]: addr_parts.append(f"ស្រុក{s['district']}" if not str(s['district']).startswith("ស្រុក") and not str(s['district']).startswith("ក្រុង") else str(s['district']))
+        if s["province"]: addr_parts.append(f"ខេត្ត{s['province']}" if not str(s['province']).startswith("ខេត្ត") else str(s['province']))
+        full_addr = " ".join(addr_parts) if addr_parts else "-"
 
-      sup_df["អាសយដ្ឋានពេញលេញ"] = sup_df.apply(build_full_addr, axis=1)
-      sup_df["ស្ថានភាពហត្ថលេខា"] = sup_df["ហត្ថលេខា"].apply(lambda s: "✅ មានហត្ថលេខា" if (s and str(s).strip() != "") else "⚪ គ្មានហត្ថលេខា")
-      sup_df["មុខទំនិញផ្គត់ផ្គង់"] = sup_df["មុខទំនិញផ្គត់ផ្គង់"].fillna("អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ")
+        lvl_label = "🏛️ តាមឃុំ" if s["supply_level"] == "commune" else "🏫 តាមសាលា"
+        target_dest = (s["target_commune"] or s["commune"] or "-") if s["supply_level"] == "commune" else (s["school_name"] or "-")
+        sig_stat = "✅ មានហត្ថលេខា" if (s["signature_data"] and str(s["signature_data"]).startswith("data:image")) else "⚪ គ្មានហត្ថលេខា"
 
-      disp_sup_df = sup_df[[
-          "សាលារៀន", "ឈ្មោះអ្នកផ្គត់ផ្គង់", "មុខទំនិញផ្គត់ផ្គង់", "អាសយដ្ឋានពេញលេញ", "លេខទូរស័ព្ទ", "ស្ថានភាពហត្ថលេខា"
-      ]]
-      st.dataframe(add_row_numbers(disp_sup_df), use_container_width=True, hide_index=True)
+        p_cnt_row = cursor.execute("SELECT COUNT(*) FROM products WHERE supplier_name=? AND price_level='supplier'", (s["supplier_name"],)).fetchone()
+        p_count = p_cnt_row[0] if p_cnt_row else 0
+        price_stat = f"✅ កំណត់រួច ({p_count} មុខ)" if p_count > 0 else "⚪ ប្រើតម្លៃគោល"
 
-      # Preview Signature Cards
-      with st.expander("👁️ មើលកាតព័ត៌មានលម្អិត និងរូបភាពហត្ថលេខារបស់អ្នកផ្គត់ផ្គង់", expanded=False):
-        c_sel_sup = st.selectbox("ជ្រើសរើសអ្នកផ្គត់ផ្គង់ដើម្បីមើលលម្អិត", [f"{r[2]} ({r[1]}) - ID: {r[0]}" for r in all_sups], key="card_sel_sup")
-        if c_sel_sup:
-          sel_id = int(c_sel_sup.split("ID: ")[-1])
-          s_data = next((r for r in all_sups if r[0] == sel_id), None)
-          if s_data:
-            col_cd1, col_cd2 = st.columns([2, 1])
-            with col_cd1:
-              st.markdown(f"### 👤 {s_data[2]}")
-              st.markdown(f"🏫 **សាលារៀនដែលផ្គត់ផ្គង់:** {s_data[1]}")
-              st.markdown(f"🛒 **មុខទំនិញដែលផ្គត់ផ្គង់:** `{s_data[9] if len(s_data) > 9 and s_data[9] else 'អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ'}`")
-              st.markdown(f"📍 **អាសយដ្ឋាន:** {s_data[3]} {s_data[4]} {s_data[5]} {s_data[6]}")
-              st.markdown(f"📞 **លេខទូរស័ព្ទ:** `{s_data[7]}`")
-            with col_cd2:
-              st.markdown("✍️ **ហត្ថលេខាដែលបានរក្សាទុក:**")
-              if s_data[8] and str(s_data[8]).startswith("data:image"):
-                st.image(s_data[8], width=160)
+        sup_display_list.append({
+            "ID": s["id"],
+            "ឈ្មោះអ្នកផ្គត់ផ្គង់": s["supplier_name"],
+            "លេខទូរស័ព្ទ": s["phone"] or "-",
+            "អាស័យដ្ឋានអ្នកផ្គត់ផ្គង់": full_addr,
+            "កម្រិតផ្គត់ផ្គង់": lvl_label,
+            "គោលដៅផ្គត់ផ្គង់": target_dest,
+            "ហត្ថលេខា": sig_stat,
+            "ស្ថានភាពតម្លៃ": price_stat
+        })
+
+      df_sups = pd.DataFrame(sup_display_list)
+      st.dataframe(add_row_numbers(df_sups), use_container_width=True, hide_index=True)
+
+      with st.expander("👁️ មើលព័ត៌មានលម្អិត & រូបភាពហត្ថលេខារបស់អ្នកផ្គត់ផ្គង់", expanded=False):
+        c_pick = st.selectbox(
+            "ជ្រើសរើសអ្នកផ្គត់ផ្គង់ដើម្បីពិនិត្យលម្អិត៖",
+            [f"👤 {s['supplier_name']} ({'សាលា: ' + s['school_name'] if s['supply_level'] != 'commune' and s['school_name'] else 'ឃុំ: ' + s['target_commune']}) - ID: {s['id']}" for s in all_sups],
+            key="view_sup_detail_pick"
+        )
+        if c_pick:
+          picked_id = int(c_pick.split("ID: ")[-1])
+          picked_s = next((s for s in all_sups if s["id"] == picked_id), None)
+          if picked_s:
+            cd_col1, cd_col2 = st.columns([2, 1])
+            with cd_col1:
+              st.markdown(f"#### 👤 {picked_s['supplier_name']}")
+              st.markdown(f"📞 **លេខទូរស័ព្ទ៖** `{picked_s['phone'] or '-'}`")
+              st.markdown(f"📍 **អាស័យដ្ឋានផ្ទាល់ខ្លួន៖** {picked_s['village']} {picked_s['commune']} {picked_s['district']} {picked_s['province']}")
+              st.markdown(f"🎯 **កម្រិតផ្គត់ផ្គង់៖** `{'តាមឃុំ (Commune Level)' if picked_s['supply_level'] == 'commune' else 'តាមសាលា (School Level)'}`")
+              st.markdown(f"🏫 **គោលដៅផ្គត់ផ្គង់៖** `{picked_s['school_name'] if picked_s['supply_level'] != 'commune' else picked_s['target_commune']}`")
+            with cd_col2:
+              st.markdown("**✍️ ហត្ថលេខាអ្នកផ្គត់ផ្គង់៖**")
+              if picked_s["signature_data"] and str(picked_s["signature_data"]).startswith("data:image"):
+                st.image(picked_s["signature_data"], width=170)
               else:
-                st.caption("*(គ្មានរូបភាពហត្ថលេខា - ប្រើការចុះហត្ថលេខាផ្ទាល់ដៃលើក្រដាស)*")
+                st.caption("*(គ្មានហត្ថលេខាឌីជីថល - ទុកចន្លោះចុះហត្ថលេខាផ្ទាល់ដៃ)*")
     else:
-      st.info("មិនទាន់មានអ្នកផ្គត់ផ្គង់នៅក្នុងប្រព័ន្ធនៅឡើយទេ។")
+      st.info("💡 មិនទាន់មានអ្នកផ្គត់ផ្គង់ក្នុងប្រព័ន្ធនៅឡើយទេ។ សូមចុចផ្ទាំង «➕ បន្ថែម / កែប្រែព័ត៌មាន & តម្លៃទំនិញ» ដើម្បីបង្កើតថ្មី។")
 
-  # ----------------- TAB 2: បន្ថែមអ្នកផ្គត់ផ្គង់ថ្មី -----------------
+  # ----------------- TAB 2: បន្ថែម / កែប្រែព័ត៌មាន & តម្លៃទំនិញ -----------------
   with sup_tab2:
-    st.subheader("➕ បន្ថែមអ្នកផ្គត់ផ្គង់ថ្មីទៅសាលារៀន")
-    c_ad1, c_ad2, c_ad3 = st.columns(3)
-    with c_ad1:
-      dist_list = get_districts()
-      add_sup_d = st.selectbox("ក្រុង/ស្រុក/ខណ្ឌ នៃសាលា", ["-- ទាំងអស់ --"] + dist_list, key="add_sup_d")
-    with c_ad2:
-      comm_list = get_communes(district=add_sup_d if add_sup_d != "-- ទាំងអស់ --" else None)
-      add_sup_c = st.selectbox("ឃុំ/សង្កាត់ នៃសាលា", ["-- ទាំងអស់ --"] + comm_list, key="add_sup_c")
-    with c_ad3:
-      if add_sup_c != "-- ទាំងអស់ --":
-        sch_choices = get_schools_by_commune(add_sup_c)
-      elif add_sup_d != "-- ទាំងអស់ --":
-        rows_s = cursor.execute("SELECT DISTINCT name FROM schools WHERE district=?", (add_sup_d,)).fetchall()
-        sch_choices = [r[0] for r in rows_s]
-      else:
-        sch_choices = get_all_schools()
-      add_sup_school_sel = st.selectbox("🏫 សាលារៀន", sch_choices + ["➕ វាយបញ្ចូលសាលាថ្មី..."], key="add_sup_school_sel")
-      if add_sup_school_sel == "➕ វាយបញ្ចូលសាលាថ្មី...":
-        add_sup_school = st.text_input("វាយបញ្ចូលឈ្មោះសាលាថ្មី", key="add_sup_sch_new").strip()
-      else:
-        add_sup_school = add_sup_school_sel
+    all_sups_edit = get_all_suppliers()
+    sup_select_options = ["➕ បង្កើតអ្នកផ្គត់ផ្គង់ថ្មី..."] + [
+        f"👤 {s['supplier_name']} ({'សាលា: ' + s['school_name'] if s['supply_level'] != 'commune' and s['school_name'] else 'ឃុំ: ' + (s['target_commune'] or s['commune'])}) - ID: {s['id']}"
+        for s in all_sups_edit
+    ]
+    
+    st.markdown("#### 🎯 ជ្រើសរើសប្រតិបត្តិការ")
+    chosen_op = st.selectbox(
+        "ជ្រើសរើសអ្នកផ្គត់ផ្គង់ដើម្បីកែប្រែ ឬបង្កើតថ្មី៖",
+        sup_select_options,
+        key="sup_manage_op_select"
+    )
+    is_new = (chosen_op == "➕ បង្កើតអ្នកផ្គត់ផ្គង់ថ្មី...")
+    cur_sup = None
+    if not is_new:
+      target_id = int(chosen_op.split("ID: ")[-1])
+      cur_sup = next((s for s in all_sups_edit if s["id"] == target_id), None)
+
+    sup_id_for_key = cur_sup["id"] if cur_sup else "new"
 
     st.divider()
-    col_sn1, col_sn2 = st.columns(2)
-    with col_sn1:
-      new_sup_name = st.text_input("👤 ឈ្មោះអ្នកផ្គត់ផ្គង់", placeholder="ឧ. សាត ក្រូត", key="new_sup_name").strip()
-    with col_sn2:
-      new_sup_phone = st.text_input("📞 លេខទូរស័ព្ទ", placeholder="ឧ. 090 854 133", key="new_sup_phone").strip()
 
-    st.markdown("##### 🛒 មុខទំនិញដែលផ្គត់ផ្គង់ (ធីកជ្រើសរើស Checkbox):")
-    col_ck1, col_ck2, col_ck3, col_ck4, col_ck5 = st.columns(5)
-    with col_ck1:
-      ck_sup_rice = st.checkbox("🍚 អង្ករ", value=True, key="new_sup_ck_rice")
-    with col_ck2:
-      ck_sup_salt = st.checkbox("🧂 អំបិល", value=True, key="new_sup_ck_salt")
-    with col_ck3:
-      ck_sup_oil = st.checkbox("🫗 ប្រេងឆា", value=True, key="new_sup_ck_oil")
-    with col_ck4:
-      ck_sup_meat = st.checkbox("🥩 ត្រី សាច់ ស៊ុត", value=True, key="new_sup_ck_meat")
-    with col_ck5:
-      ck_sup_veg = st.checkbox("🥬 បន្លែ", value=True, key="new_sup_ck_veg")
+    # 1. ព័ត៌មានផ្ទាល់ខ្លួន
+    st.markdown("#### 👤 ១. ព័ត៌មានផ្ទាល់ខ្លួនអ្នកផ្គត់ផ្គង់")
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+      val_name = st.text_input("ឈ្មោះអ្នកផ្គត់ផ្គង់ *", value=(cur_sup["supplier_name"] if cur_sup else ""), placeholder="ឧ. សាត ក្រូត", key=f"inp_sup_name_{sup_id_for_key}").strip()
+    with col_p2:
+      val_phone = st.text_input("លេខទូរស័ព្ទ", value=(cur_sup["phone"] if cur_sup else ""), placeholder="ឧ. 090 854 133", key=f"inp_sup_phone_{sup_id_for_key}").strip()
 
-    chosen_sup_cats = []
-    if ck_sup_rice: chosen_sup_cats.append("អង្ករ")
-    if ck_sup_salt: chosen_sup_cats.append("អំបិល")
-    if ck_sup_oil: chosen_sup_cats.append("ប្រេងឆា")
-    if ck_sup_meat: chosen_sup_cats.append("ត្រី សាច់ ស៊ុត")
-    if ck_sup_veg: chosen_sup_cats.append("បន្លែ")
-    new_sup_cats_str = ", ".join(chosen_sup_cats)
+    # 2. អាស័យដ្ឋានអ្នកផ្គត់ផ្គង់
+    st.markdown("#### 📍 ២. អាស័យដ្ឋានអ្នកផ្គត់ផ្គង់ (ផ្ទាល់ខ្លួន)")
+    col_a1, col_a2, col_a3, col_a4 = st.columns(4)
+    with col_a1:
+      val_prov = st.text_input("ខេត្ត", value=(cur_sup["province"] if cur_sup and cur_sup["province"] else "សៀមរាប"), key=f"inp_sup_prov_{sup_id_for_key}").strip()
+    with col_a2:
+      val_dist = st.text_input("ក្រុង/ស្រុក/ខណ្ឌ", value=(cur_sup["district"] if cur_sup and cur_sup["district"] else "ស្រីស្នំ"), key=f"inp_sup_dist_{sup_id_for_key}").strip()
+    with col_a3:
+      val_comm = st.text_input("ឃុំ/សង្កាត់", value=(cur_sup["commune"] if cur_sup and cur_sup["commune"] else "រោង"), key=f"inp_sup_comm_{sup_id_for_key}").strip()
+    with col_a4:
+      val_vill = st.text_input("ភូមិ", value=(cur_sup["village"] if cur_sup and cur_sup["village"] else "ភូមិខ្មែរ"), key=f"inp_sup_vill_{sup_id_for_key}").strip()
 
-    st.markdown("##### 📍 អាសយដ្ឋានអ្នកផ្គត់ផ្គង់:")
-    col_loc1, col_loc2, col_loc3, col_loc4 = st.columns(4)
-    with col_loc1:
-      prov_db, dist_db, comm_db, vill_db = get_school_location_info(add_sup_school)
-      new_sup_prov = st.text_input("ខេត្ត", value=prov_db if prov_db else "សៀមរាប", key="new_sup_prov").strip()
-    with col_loc2:
-      new_sup_dist = st.text_input("ក្រុង/ស្រុក/ខណ្ឌ", value=dist_db if dist_db else (add_sup_d if add_sup_d != "-- ទាំងអស់ --" else "ស្រីស្នំ"), key="new_sup_dist").strip()
-    with col_loc3:
-      new_sup_comm = st.text_input("ឃុំ/សង្កាត់", value=comm_db if comm_db else (add_sup_c if add_sup_c != "-- ទាំងអស់ --" else "រោង"), key="new_sup_comm").strip()
-    with col_loc4:
-      new_sup_vill = st.text_input("ភូមិ", value="ភូមិខ្មែរ", key="new_sup_vill").strip()
-
-    st.markdown("##### ✍️ ហត្ថលេខាអ្នកផ្គត់ផ្គង់ (សម្រាប់ប្រើក្នុងវិក្កយបត្រ និងសំណើទូទាត់):")
-    st.info("💡 អាចបញ្ចូលរូបថត ឬរូបភាពហត្ថលេខា។ ប្រព័ន្ធនឹងលុបផ្ទៃខាងក្រោយ និងប្តូរពណ៌ទឹកប៊ិចដោយស្វ័យប្រវត្តិ។")
-    new_sig_b64 = render_signature_uploader_with_tools(
-        label="បញ្ចូលរូបភាពហត្ថលេខាអ្នកផ្គត់ផ្គង់",
-        key_prefix="new_sup_sig_form",
-        allow_blank_choice=False,
-        default_recolor="blue"
-    ) or ""
-
-    if st.button("➕ រក្សាទុកអ្នកផ្គត់ផ្គង់ថ្មី", key="btn_save_new_sup", use_container_width=True):
-      if not add_sup_school:
-        st.error("សូមជ្រើសរើស ឬវាយបញ្ចូលឈ្មោះសាលារៀន!")
-      elif not new_sup_name:
-        st.error("សូមវាយបញ្ចូលឈ្មោះអ្នកផ្គត់ផ្គង់!")
+    # 3. ហត្ថលេខាអ្នកផ្គត់ផ្គង់
+    st.markdown("#### ✍️ ៣. ហត្ថលេខាអ្នកផ្គត់ផ្គង់ (មានប៊ូតុងលុបផ្ទៃខាងក្រោយ & កែប្រែពណ៌)")
+    existing_sig_val = cur_sup["signature_data"] if cur_sup else None
+    
+    col_sig_tool, col_sig_prev = st.columns([2, 1])
+    with col_sig_tool:
+      uploaded_sig_data = render_signature_uploader_with_tools(
+          label="បញ្ចូល ឬផ្លាស់ប្ដូររូបភាពហត្ថលេខា (PNG / JPG / WebP)",
+          key_prefix=f"tool_sig_{sup_id_for_key}",
+          default_sig_b64=existing_sig_val,
+          allow_use_saved=True if existing_sig_val else False,
+          saved_sig_b64=existing_sig_val,
+          allow_blank_choice=True,
+          default_recolor="blue"
+      )
+    with col_sig_prev:
+      st.markdown("**👁️ ការបង្ហាញហត្ថលេខា៖**")
+      if uploaded_sig_data and str(uploaded_sig_data).startswith("data:image"):
+        st.image(uploaded_sig_data, width=150, caption="ហត្ថលេខាសកម្ម")
+      elif existing_sig_val and str(existing_sig_val).startswith("data:image"):
+        st.image(existing_sig_val, width=150, caption="ហត្ថលេខាដើម")
       else:
-        save_or_update_supplier(
-            school_name=add_sup_school,
-            supplier_name=new_sup_name,
-            village=new_sup_vill,
-            commune=new_sup_comm,
-            district=new_sup_dist,
-            province=new_sup_prov,
-            phone=new_sup_phone,
-            signature_data=new_sig_b64,
-            supplied_categories=new_sup_cats_str
+        st.caption("*(ទុកចន្លោះ ........... ចុះហត្ថលេខាផ្ទាល់ដៃ)*")
+
+    # 4. ព័ត៌មានអំពីការផ្គត់ផ្គង់
+    st.markdown("#### 🚚 ៤. ព័ត៌មានអំពីការផ្គត់ផ្គង់ (កម្រិតផ្គត់ផ្គង់ & អាស័យដ្ឋានគោលដៅ)")
+    default_scope_idx = 1 if (cur_sup and cur_sup["supply_level"] == "school") else 0
+    c_scope_rad, c_target_loc = st.columns([1.5, 2.5])
+    with c_scope_rad:
+      chosen_scope = st.radio(
+          "🎯 ជម្រើសកម្រិតផ្គត់ផ្គង់៖",
+          ["🏛️ តាមឃុំ (Commune Level)", "🏫 តាមសាលា (School Level)"],
+          index=default_scope_idx,
+          key=f"scope_radio_{sup_id_for_key}"
+      )
+      is_commune_level = "តាមឃុំ" in chosen_scope
+
+    with c_target_loc:
+      st.markdown("**📍 អាស័យដ្ឋានគោលដៅផ្គត់ផ្គង់៖**")
+      col_loc1, col_loc2, col_loc3 = st.columns(3)
+      with col_loc1:
+        cur_t_prv = cur_sup["target_province"] if cur_sup and cur_sup["target_province"] else (cur_sup["province"] if cur_sup else "សៀមរាប")
+        provinces_all = get_provinces()
+        prv_idx = provinces_all.index(cur_t_prv) if cur_t_prv in provinces_all else 0
+        tgt_province = st.selectbox("ខេត្តគោលដៅ", provinces_all, index=prv_idx, key=f"t_prv_{sup_id_for_key}")
+      with col_loc2:
+        dist_options = get_districts(province=tgt_province)
+        cur_t_dst = cur_sup["target_district"] if cur_sup and cur_sup["target_district"] else (cur_sup["district"] if cur_sup else "")
+        dst_idx = dist_options.index(cur_t_dst) if cur_t_dst in dist_options else 0
+        tgt_district = st.selectbox("ក្រុង/ស្រុកគោលដៅ", dist_options if dist_options else ["ស្រីស្នំ"], index=dst_idx, key=f"t_dst_{sup_id_for_key}")
+      with col_loc3:
+        comm_options = get_communes(district=tgt_district)
+        cur_t_com = cur_sup["target_commune"] if cur_sup and cur_sup["target_commune"] else (cur_sup["commune"] if cur_sup else "")
+        com_idx = comm_options.index(cur_t_com) if cur_t_com in comm_options else 0
+        tgt_commune = st.selectbox("ឃុំ/សង្កាត់គោលដៅ", comm_options if comm_options else ["រោង"], index=com_idx, key=f"t_com_{sup_id_for_key}")
+
+    if not is_commune_level:
+      school_candidates = get_schools_by_commune(tgt_commune) if tgt_commune else get_all_schools()
+      cur_target_sch = cur_sup["school_name"] if cur_sup else ""
+      sch_idx = school_candidates.index(cur_target_sch) if cur_target_sch in school_candidates else 0
+      col_s1, col_s2 = st.columns([2, 1])
+      with col_s1:
+        sel_sch = st.selectbox("🏫 សាលារៀនដែលត្រូវផ្គត់ផ្គង់ *", school_candidates + ["➕ វាយបញ្ចូលសាលាថ្មី..."], index=sch_idx, key=f"t_sch_sel_{sup_id_for_key}")
+      with col_s2:
+        if sel_sch == "➕ វាយបញ្ចូលសាលាថ្មី...":
+          tgt_school = st.text_input("វាយបញ្ចូលឈ្មោះសាលាថ្មី", key=f"t_sch_new_{sup_id_for_key}").strip()
+        else:
+          tgt_school = sel_sch
+    else:
+      tgt_school = ""
+      st.info(f"🏛️ អ្នកផ្គត់ផ្គង់នេះ ផ្គត់ផ្គង់គ្រប់សាលារៀនទាំងអស់នៅក្នុង **ឃុំ{tgt_commune}**")
+
+    # 5. កំណត់តម្លៃទំនិញផ្គត់ផ្គង់ & ប្រៀបធៀបតម្លៃគោល
+    st.markdown("#### 💰 ៥. កំណត់តម្លៃទំនិញផ្គត់ផ្គង់ & ផ្ទៀងផ្ទាត់ធៀបនឹងតម្លៃគោល")
+    
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 12px 16px; margin-bottom: 14px;">
+      <div style="font-weight: 700; color: #1e293b; margin-bottom: 6px; font-size: 14px;">🎯 គោលការណ៍ហាយឡាយពណ៌ប្រៀបធៀបតម្លៃមធ្យម ធៀបនឹងតម្លៃគោល៖</div>
+      <div style="display: flex; gap: 15px; flex-wrap: wrap; font-size: 13px;">
+        <span style="background: #fee2e2; border: 1px solid #ef4444; color: #991b1b; padding: 4px 10px; border-radius: 6px; font-weight: 600;">🔴 ពណ៌ក្រហម៖ ខ្ពស់ជាងតម្លៃគោលលើសពី ១០% (&gt; +10%)</span>
+        <span style="background: #fef9c3; border: 1px solid #eab308; color: #854d0e; padding: 4px 10px; border-radius: 6px; font-weight: 600;">🟡 ពណ៌លឿង៖ ទាបជាងតម្លៃគោលលើសពី ១០% (&lt; -10%)</span>
+        <span style="background: #ecfccb; border: 1px solid #84cc16; color: #365314; padding: 4px 10px; border-radius: 6px; font-weight: 600;">🟢 ពណ៌ត្រួយចេក៖ ស្ថិតនៅចន្លោះតម្លៃគោល ±១០% (កម្រិតសមស្រប)</span>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Initialize price state for this supplier
+    mat_key = f"sup_mat_{sup_id_for_key}"
+    if mat_key not in st.session_state:
+      st.session_state[mat_key] = {}
+      saved_sup_prices = get_supplier_prices_map(cur_sup["supplier_name"]) if cur_sup else {}
+      for it in SUPPLIER_PRODUCT_CATALOG:
+        inm = it["name"]
+        if inm in saved_sup_prices:
+          st.session_state[mat_key][inm] = {
+              "p1": float(saved_sup_prices[inm]["p1"]),
+              "p2": float(saved_sup_prices[inm]["p2"])
+          }
+        else:
+          st.session_state[mat_key][inm] = {
+              "p1": float(it["default_p1"]),
+              "p2": float(it["default_p2"])
+          }
+
+    # Group & Category Filter Buttons
+    col_btn_grp, col_btn_cat = st.columns(2)
+    with col_btn_grp:
+      sel_grp = st.segmented_control(
+          "🏷️ ប៊ូតុងជ្រើសរើសក្រុមទំនិញ៖",
+          options=["🌟 ទាំងអស់", "🌾 ស្បៀងគោល", "🥦 បន្លែគោល", "🥩 ស្បៀងបន្ថែម", "🥕 បន្លែបន្ថែម"],
+          default="🌟 ទាំងអស់",
+          key=f"ctrl_grp_{sup_id_for_key}"
+      ) or "🌟 ទាំងអស់"
+    with col_btn_cat:
+      sel_cat = st.segmented_control(
+          "🛒 ប៊ូតុងជ្រើសរើសប្រភេទទំនិញ៖",
+          options=["🌟 ទាំងអស់", "🍚 អង្ករ", "🫗 ប្រេងឆា", "🧂 អំបិល", "🥩 ត្រី សាច់ ស៊ុត", "🥬 បន្លែ"],
+          default="🌟 ទាំងអស់",
+          key=f"ctrl_cat_{sup_id_for_key}"
+      ) or "🌟 ទាំងអស់"
+
+    clean_grp = sel_grp.replace("🌾 ", "").replace("🥦 ", "").replace("🥩 ", "").replace("🥕 ", "").replace("🌟 ", "").strip()
+    clean_cat = sel_cat.replace("🍚 ", "").replace("🫗 ", "").replace("🧂 ", "").replace("🥩 ", "").replace("🥬 ", "").replace("🌟 ", "").strip()
+
+    filtered_prods = []
+    for it in SUPPLIER_PRODUCT_CATALOG:
+      if clean_grp != "ទាំងអស់" and it["group"] != clean_grp:
+        continue
+      if clean_cat != "ទាំងអស់" and it["category"] != clean_cat:
+        continue
+      filtered_prods.append(it)
+
+    # Calculate real-time statistics across all 61 items
+    cnt_red = 0
+    cnt_yellow = 0
+    cnt_lime = 0
+    for it in SUPPLIER_PRODUCT_CATALOG:
+      inm = it["name"]
+      p_vals = st.session_state[mat_key].get(inm, {"p1": it["default_p1"], "p2": it["default_p2"]})
+      p1_v = float(p_vals.get("p1", it["default_p1"]))
+      p2_v = float(p_vals.get("p2", it["default_p2"]))
+      avg_v = round((p1_v + p2_v) / 2.0, 2)
+      base_v = get_catalog_base_price(inm, tgt_school if not is_commune_level else None, tgt_commune)
+      ev_st = evaluate_supplier_price_status(avg_v, base_v)
+      if ev_st["status"] == "high": cnt_red += 1
+      elif ev_st["status"] == "low": cnt_yellow += 1
+      elif ev_st["status"] == "normal_lime": cnt_lime += 1
+
+    # KPI summary bar
+    kp1, kp2, kp3, kp4 = st.columns(4)
+    with kp1:
+      st.metric("📦 កំពុងបង្ហាញ", f"{len(filtered_prods)} មុខ", delta=f"សរុប {len(SUPPLIER_PRODUCT_CATALOG)} មុខ")
+    with kp2:
+      st.metric("🔴 ថ្លៃជាងគោល >10%", f"{cnt_red} មុខ", delta="ក្រហម" if cnt_red > 0 else "គ្មាន", delta_color="inverse")
+    with kp3:
+      st.metric("🟡 ថោកជាងគោល >10%", f"{cnt_yellow} មុខ", delta="លឿង" if cnt_yellow > 0 else "គ្មាន", delta_color="off")
+    with kp4:
+      st.metric("🟢 ត្រួយចេក (±10%)", f"{cnt_lime} មុខ", delta="សមស្រប", delta_color="normal")
+
+    st.markdown("---")
+
+    if not filtered_prods:
+      st.warning(f"⚠️ គ្មានមុខទំនិញដែលត្រូវគ្នានឹងក្រុម «{clean_grp}» និងប្រភេទ «{clean_cat}» ទេ។ សូមជ្រើសរើស «🌟 ទាំងអស់»។")
+    else:
+      # Display products vertically
+      for it in filtered_prods:
+        inm = it["name"]
+        unit = it["unit"]
+        grp = it["group"]
+        cat = it["category"]
+        base_p = get_catalog_base_price(inm, tgt_school if not is_commune_level else None, tgt_commune)
+
+        # Retrieve current prices
+        cur_p_entry = st.session_state[mat_key].get(inm, {"p1": it["default_p1"], "p2": it["default_p2"]})
+        cur_p1 = float(cur_p_entry.get("p1", it["default_p1"]))
+        cur_p2 = float(cur_p_entry.get("p2", it["default_p2"]))
+        cur_avg = round((cur_p1 + cur_p2) / 2.0, 2)
+        cur_eval = evaluate_supplier_price_status(cur_avg, base_p)
+
+        # Render styled item container
+        st.markdown(f"""
+        <div style="background-color: {cur_eval['bg_color']}; border: 1.5px solid {cur_eval['border_color']}; border-radius: 8px; padding: 10px 14px; margin-top: 12px; margin-bottom: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+            <div>
+              <span style="font-size: 16px; font-weight: 700; color: #0f172a;">{inm}</span>
+              <span style="font-size: 13px; color: #475569; margin-left: 6px; font-weight: 500;">({unit})</span>
+              <span style="background: rgba(0,0,0,0.06); padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 8px; font-weight: 600; color: #334155;">{grp}</span>
+              <span style="background: rgba(0,0,0,0.04); padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 4px; color: #64748b;">{cat}</span>
+              <div style="font-size: 12px; color: #475569; margin-top: 3px;">
+                🏷️ តម្លៃគោល៖ <b>{format_riel(base_p)}</b> &nbsp;|&nbsp; ចន្លោះ ±10%៖ <b>{format_riel(base_p * 0.9)}</b> ~ <b>{format_riel(base_p * 1.1)}</b>
+              </div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 15px; font-weight: 800; color: {cur_eval['text_color']};">
+                តម្លៃមធ្យម៖ {format_riel(cur_avg)}
+              </div>
+              <div style="font-size: 12px; font-weight: 700; color: {cur_eval['text_color']}; margin-top: 2px;">
+                {cur_eval['badge_text']}
+              </div>
+            </div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_in1, col_in2, col_disp_avg = st.columns([2, 2, 2])
+        with col_in1:
+          val_p1 = st.number_input(
+              f"តម្លៃវគ្គ១ (៛) - {inm}",
+              min_value=0.0,
+              max_value=500000.0,
+              step=100.0,
+              value=cur_p1,
+              key=f"inp_p1_{mat_key}_{inm}",
+              help="តម្លៃក្នុងវគ្គទី ១"
+          )
+          st.session_state[mat_key][inm]["p1"] = val_p1
+        with col_in2:
+          val_p2 = st.number_input(
+              f"តម្លៃវគ្គ២ (៛) - {inm}",
+              min_value=0.0,
+              max_value=500000.0,
+              step=100.0,
+              value=cur_p2,
+              key=f"inp_p2_{mat_key}_{inm}",
+              help="តម្លៃក្នុងវគ្គទី ២"
+          )
+          st.session_state[mat_key][inm]["p2"] = val_p2
+        with col_disp_avg:
+          re_avg = round((val_p1 + val_p2) / 2.0, 2)
+          st.text_input(
+              f"តម្លៃមធ្យមគណនាស្វ័យប្រវត្តិ - {inm}",
+              value=f"មធ្យម៖ {format_riel(re_avg)}",
+              disabled=True,
+              key=f"disp_avg_{mat_key}_{inm}"
+          )
+
+    # Action buttons
+    st.divider()
+    b_c1, b_c2, b_c3 = st.columns([2, 1.5, 1.5])
+    with b_c1:
+      btn_save_sup = st.button("💾 រក្សាទុកព័ត៌មាន & តម្លៃទំនិញអ្នកផ្គត់ផ្គង់", type="primary", use_container_width=True, key=f"btn_save_{sup_id_for_key}")
+    with b_c2:
+      btn_reset_defaults = st.button("🔄 យកតម្លៃគោលលំនាំដើម (Reset)", use_container_width=True, key=f"btn_reset_{sup_id_for_key}")
+    with b_c3:
+      btn_del_sup = st.button(f"🗑️ លុបអ្នកផ្គត់ផ្គង់នេះ", use_container_width=True, key=f"btn_del_{sup_id_for_key}") if not is_new and cur_sup else False
+
+    if btn_reset_defaults:
+      for it in SUPPLIER_PRODUCT_CATALOG:
+        inm = it["name"]
+        st.session_state[mat_key][inm] = {
+            "p1": float(it["default_p1"]),
+            "p2": float(it["default_p2"])
+        }
+      st.success("✅ បានកំណត់តម្លៃទំនិញទាំងអស់មកតាមតម្លៃគោលលំនាំដើមវិញ!")
+      st.rerun()
+
+    if btn_del_sup and cur_sup:
+      delete_supplier(cur_sup["id"])
+      cursor.execute("DELETE FROM products WHERE supplier_name=? AND price_level='supplier'", (cur_sup["supplier_name"],))
+      conn.commit()
+      st.success(f"🗑️ បានលុបអ្នកផ្គត់ផ្គង់ «{cur_sup['supplier_name']}» និងទិន្នន័យតម្លៃពាក់ព័ន្ធដោយជោគជ័យ!")
+      st.rerun()
+
+    if btn_save_sup:
+      if not val_name:
+        st.error("⚠️ សូមវាយបញ្ចូលឈ្មោះអ្នកផ្គត់ផ្គង់!")
+      elif not is_commune_level and not tgt_school:
+        st.error("⚠️ សូមជ្រើសរើស ឬវាយបញ្ចូលឈ្មោះសាលារៀនគោលដៅ!")
+      else:
+        final_sig_data = uploaded_sig_data if uploaded_sig_data is not None else (existing_sig_val or "")
+        sup_lvl_str = "commune" if is_commune_level else "school"
+        saved_id = save_or_update_supplier(
+            school_name=tgt_school if not is_commune_level else "",
+            supplier_name=val_name,
+            village=val_vill,
+            commune=val_comm,
+            district=val_dist,
+            province=val_prov,
+            phone=val_phone,
+            signature_data=final_sig_data,
+            supply_level=sup_lvl_str,
+            target_commune=tgt_commune,
+            target_district=tgt_district,
+            target_province=tgt_province,
+            supplier_id=cur_sup["id"] if cur_sup else None
         )
-        st.success(f"🎉 បានរក្សាទុកអ្នកផ្គត់ផ្គង់ «{new_sup_name}» សម្រាប់សាលា «{add_sup_school}» ដោយជោគជ័យ!")
+        saved_prods_count = save_all_supplier_prices(
+            supplier_name=val_name,
+            price_dict=st.session_state[mat_key],
+            supply_level=sup_lvl_str,
+            target_school=tgt_school,
+            target_commune=tgt_commune,
+            target_district=tgt_district,
+            target_province=tgt_province
+        )
+        st.success(f"🎉 បានរក្សាទុកអ្នកផ្គត់ផ្គង់ «{val_name}» និងតម្លៃទំនិញចំនួន {saved_prods_count} មុខដោយជោគជ័យ!")
         st.rerun()
 
-  # ----------------- TAB 3: កែប្រែ / លុបអ្នកផ្គត់ផ្គង់ -----------------
+  # ----------------- TAB 3: នាំចូលអ្នកផ្គត់ផ្គង់ពីក្រៅ -----------------
   with sup_tab3:
-    st.subheader("✏️ កែប្រែ ឬលុបព័ត៌មានអ្នកផ្គត់ផ្គង់")
-    all_sups_edit = get_all_suppliers()
-    if all_sups_edit:
-      sup_choices = [f"{r[2]} ({r[1]}) - ID: {r[0]}" for r in all_sups_edit]
-      chosen_sup_item = st.selectbox("ជ្រើសរើសអ្នកផ្គត់ផ្គង់ដើម្បីកែប្រែ ឬលុប", sup_choices, key="edit_sup_choice")
-      chosen_sup_id = int(chosen_sup_item.split("ID: ")[-1])
-      target_sup = next((r for r in all_sups_edit if r[0] == chosen_sup_id), None)
-
-      if target_sup:
-        with st.form("edit_sup_form"):
-          e_school = st.text_input("សាលារៀនដែលផ្គត់ផ្គង់", value=target_sup[1])
-          e_name = st.text_input("ឈ្មោះអ្នកផ្គត់ផ្គង់", value=target_sup[2])
-          e_phone = st.text_input("លេខទូរស័ព្ទ", value=target_sup[7] or "")
-
-          st.markdown("##### 🛒 មុខទំនិញដែលផ្គត់ផ្គង់:")
-          cur_sup_cats = str(target_sup[9] or "") if len(target_sup) > 9 else "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ"
-          c_ek1, c_ek2, c_ek3, c_ek4, c_ek5 = st.columns(5)
-          with c_ek1:
-            e_ck_rice = st.checkbox("🍚 អង្ករ", value=("អង្ករ" in cur_sup_cats), key=f"e_ck_rice_{chosen_sup_id}")
-          with c_ek2:
-            e_ck_salt = st.checkbox("🧂 អំបិល", value=("អំបិល" in cur_sup_cats), key=f"e_ck_salt_{chosen_sup_id}")
-          with c_ek3:
-            e_ck_oil = st.checkbox("🫗 ប្រេងឆា", value=("ប្រេងឆា" in cur_sup_cats), key=f"e_ck_oil_{chosen_sup_id}")
-          with c_ek4:
-            e_ck_meat = st.checkbox("🥩 ត្រី សាច់ ស៊ុត", value=(any(k in cur_sup_cats for k in ["សាច់", "ត្រី", "ស៊ុត"])), key=f"e_ck_meat_{chosen_sup_id}")
-          with c_ek5:
-            e_ck_veg = st.checkbox("🥬 បន្លែ", value=("បន្លែ" in cur_sup_cats), key=f"e_ck_veg_{chosen_sup_id}")
-
-          e_chosen_cats = []
-          if e_ck_rice: e_chosen_cats.append("អង្ករ")
-          if e_ck_salt: e_chosen_cats.append("អំបិល")
-          if e_ck_oil: e_chosen_cats.append("ប្រេងឆា")
-          if e_ck_meat: e_chosen_cats.append("ត្រី សាច់ ស៊ុត")
-          if e_ck_veg: e_chosen_cats.append("បន្លែ")
-          e_updated_cats_str = ", ".join(e_chosen_cats)
-          
-          c_e1, c_e2, c_e3, c_e4 = st.columns(4)
-          with c_e1: e_vill = st.text_input("ភូមិ", value=target_sup[3] or "")
-          with c_e2: e_comm = st.text_input("ឃុំ/សង្កាត់", value=target_sup[4] or "")
-          with c_e3: e_dist = st.text_input("ក្រុង/ស្រុក", value=target_sup[5] or "")
-          with c_e4: e_prov = st.text_input("ខេត្ត", value=target_sup[6] or "")
-
-          st.markdown("✍️ **ហត្ថលេខាបច្ចុប្បន្ន:**")
-          if target_sup[8] and str(target_sup[8]).startswith("data:image"):
-            st.image(target_sup[8], width=130)
-          else:
-            st.caption("*(គ្មានហត្ថលេខា - ទុកចន្លោះសម្រាប់ចុះហត្ថលេខាផ្ទាល់ដៃ)*")
-
-          clear_sig = st.checkbox("🗑️ លុបហត្ថលេខានេះចេញ (ទុកចន្លោះចុះហត្ថលេខាផ្ទាល់ដៃ)")
-          btn_update_sup = st.form_submit_button("💾 រក្សាទុកការកែប្រែ", use_container_width=True)
-
-          if btn_update_sup:
-            updated_sig = "" if clear_sig else target_sup[8]
-            cursor.execute("""
-              UPDATE suppliers 
-              SET school_name=?, supplier_name=?, village=?, commune=?, district=?, province=?, phone=?, signature_data=?, supplied_categories=?
-              WHERE id=?
-            """, (e_school, e_name, e_vill, e_comm, e_dist, e_prov, e_phone, updated_sig, e_updated_cats_str, chosen_sup_id))
-            conn.commit()
-            st.success("🎉 បានកែប្រែព័ត៌មានអ្នកផ្គត់ផ្គង់ដោយជោគជ័យ!")
-            st.rerun()
-
-        with st.expander("📤 ផ្លាស់ប្ដូររូបភាពហត្ថលេខាថ្មីសម្រាប់អ្នកផ្គត់ផ្គង់នេះ"):
-          new_edit_sig_data = render_signature_uploader_with_tools(
-              label="បញ្ចូលរូបភាពហត្ថលេខាថ្មី",
-              key_prefix=f"edit_sup_sig_{chosen_sup_id}",
-              allow_blank_choice=False,
-              default_recolor="blue"
-          )
-          if new_edit_sig_data and st.button("💾 រក្សាទុករូបភាពហត្ថលេខាថ្មី", key=f"btn_save_newsig_{chosen_sup_id}"):
-            cursor.execute("UPDATE suppliers SET signature_data=? WHERE id=?", (new_edit_sig_data, chosen_sup_id))
-            conn.commit()
-            st.success("🎉 បានធ្វើបច្ចុប្បន្នភាពហត្ថលេខាថ្មីជោគជ័យ!")
-            st.rerun()
-
-        st.divider()
-        if st.button(f"🗑️ លុបអ្នកផ្គត់ផ្គង់ «{target_sup[2]}» ចេញពីប្រព័ន្ធ", key="btn_del_sup", use_container_width=True):
-          delete_supplier(chosen_sup_id)
-          st.success("បានលុបអ្នកផ្គត់ផ្គង់នេះដោយជោគជ័យ!")
-          st.rerun()
-    else:
-      st.info("មិនទាន់មានអ្នកផ្គត់ផ្គង់សម្រាប់កែប្រែទេ។")
-
-  # ----------------- TAB 4: នាំចូលអ្នកផ្គត់ផ្គង់ពីក្រៅ -----------------
-  with sup_tab4:
     st.subheader("📥 នាំចូលបញ្ជីអ្នកផ្គត់ផ្គង់ពីក្រៅ (Excel, CSV, Word, PDF, រូបភាព)")
     st.info("💡 អាចនាំចូលទិន្នន័យអ្នកផ្គត់ផ្គង់ និងអាសយដ្ឋានដោយស្វ័យប្រវត្តិពីឯកសារខាងក្រៅ")
     sup_tpl = generate_sample_excel(
@@ -4280,7 +4681,7 @@ elif menu == "🚚 គ្រប់គ្រងអ្នកផ្គត់ផ្�
     up_sup_file = st.file_uploader(
         "ជ្រើសរើសឯកសារអ្នកផ្គត់ផ្គង់ (xlsx, docx, csv, pdf, png, jpg)",
         type=["xlsx", "xls", "docx", "doc", "csv", "pdf", "png", "jpg", "jpeg"],
-        key="up_sup_file"
+        key="up_sup_file_tab3"
     )
     if up_sup_file:
       raw_sup_df = extract_table_from_file(up_sup_file)
@@ -4306,8 +4707,8 @@ elif menu == "🚚 គ្រប់គ្រងអ្នកផ្គត់ផ្�
         })
 
         st.markdown("##### ✏️ ផ្ទៀងផ្ទាត់ និងកែសម្រួលមុនពេលរក្សាទុក:")
-        edited_sup_df = st.data_editor(formatted_sup_df, num_rows="dynamic", use_container_width=True, key="ed_sup_import")
-        if st.button("📥 យល់ព្រមនាំចូលអ្នកផ្គត់ផ្គង់ទាំងអស់ចូល Database", key="btn_save_sup_import", use_container_width=True):
+        edited_sup_df = st.data_editor(formatted_sup_df, num_rows="dynamic", use_container_width=True, key="ed_sup_import_tab3")
+        if st.button("📥 យល់ព្រមនាំចូលអ្នកផ្គត់ផ្គង់ទាំងអស់ចូល Database", key="btn_save_sup_import_tab3", use_container_width=True):
           count_i = 0
           for _, r in edited_sup_df.iterrows():
             i_sch = str(r.get("សាលារៀន", "")).strip()
@@ -4322,6 +4723,7 @@ elif menu == "🚚 គ្រប់គ្រងអ្នកផ្គត់ផ្�
               count_i += 1
           st.success(f"🎉 បាននាំចូលអ្នកផ្គត់ផ្គង់ចំនួន {count_i} ដោយជោគជ័យ!")
           st.rerun()
+
 
 # ================= ៤. បញ្ជីមុខទំនិញ និងកំណត់តម្លៃ (តាមសាលា ឬ តាមឃុំ) =================
 elif menu in ["📦 បញ្ជីមុខទំនិញ និងតម្លៃ (តាមសាលា / តាមឃុំ)", "📦 បញ្ជីមុខទំនិញតាមឃុំ (វគ្គ១/វគ្គ២/មធ្យម)"]:
