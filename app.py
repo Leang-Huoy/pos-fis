@@ -494,8 +494,9 @@ def get_supplier_for_school(school_name):
        OR (',' || school_name || ',') LIKE ('%,' || ? || ',%')
        OR (school_name LIKE ('%' || ? || '%') AND school_name != '')
        OR (supply_level = 'commune' AND target_commune = (SELECT commune FROM schools WHERE name = ? LIMIT 1))
+       OR (supply_level = 'district' AND target_district = (SELECT district FROM schools WHERE name = ? LIMIT 1) AND ((',' || target_commune || ',') LIKE ('%,' || (SELECT commune FROM schools WHERE name = ? LIMIT 1) || ',%') OR target_commune LIKE ('%' || (SELECT commune FROM schools WHERE name = ? LIMIT 1) || '%') OR target_commune = '' OR target_commune IS NULL))
     ORDER BY id DESC LIMIT 1
-  """, (school_name, school_name, school_name, school_name)).fetchone()
+  """, (school_name, school_name, school_name, school_name, school_name, school_name, school_name)).fetchone()
   if row:
     addr_parts = []
     if row[1]: addr_parts.append(row[1])
@@ -602,12 +603,13 @@ def get_suppliers_for_school_and_commune(school_name, commune_name):
        OR ((',' || school_name || ',') LIKE ('%,' || ? || ',%'))
        OR (school_name LIKE ('%' || ? || '%') AND school_name != '')
        OR (target_commune = ? AND target_commune != '')
-       OR (target_commune = ? AND target_commune != '')
+       OR ((',' || target_commune || ',') LIKE ('%,' || ? || ',%'))
+       OR (target_commune LIKE ('%' || ? || '%') AND target_commune != '')
        OR (commune = ? AND commune != '')
-       OR (commune = ? AND commune != '')
+       OR ((',' || commune || ',') LIKE ('%,' || ? || ',%'))
     ORDER BY id ASC
   """
-  rows = cursor.execute(query, (school_name or "", school_name or "", school_name or "", commune_name or "", clean_c, commune_name or "", clean_c)).fetchall()
+  rows = cursor.execute(query, (school_name or "", school_name or "", school_name or "", commune_name or "", clean_c, clean_c, commune_name or "", clean_c)).fetchall()
   for r in rows:
     s = SupplierRow(r)
     if s["supplier_name"] and s["supplier_name"] not in seen_names:
@@ -914,7 +916,7 @@ def save_all_supplier_prices(supplier_name, price_dict, supply_level="school", t
     p1 = float(p_info.get("p1", it["default_p1"]))
     p2 = float(p_info.get("p2", it["default_p2"]))
     avg_p = round((p1 + p2) / 2.0, 2)
-    sch_col = target_school if supply_level == "school" else ""
+    sch_col = target_school if supply_level in ["school", "district"] else ""
     com_col = target_commune
     active_categories.add(category)
 
@@ -4841,8 +4843,16 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
         if s["province"]: addr_parts.append(f"ខេត្ត{s['province']}" if not str(s['province']).startswith("ខេត្ត") else str(s['province']))
         full_addr = " ".join(addr_parts) if addr_parts else "-"
 
-        lvl_label = "🏛️ តាមឃុំ" if s["supply_level"] == "commune" else "🏫 តាមសាលា"
-        target_dest = (s["target_commune"] or s["commune"] or "-") if s["supply_level"] == "commune" else (s["school_name"] or "-")
+        if s["supply_level"] == "district":
+          lvl_label = "🏢 តាមស្រុក"
+          target_dest = f"ស្រុក{s['target_district']} ({s['target_commune'] or 'គ្រប់ឃុំ'})"
+        elif s["supply_level"] == "commune":
+          lvl_label = "🏛️ តាមឃុំ"
+          target_dest = (s["target_commune"] or s["commune"] or "-")
+        else:
+          lvl_label = "🏫 តាមសាលា"
+          target_dest = (s["school_name"] or "-")
+
         sig_stat = "✅ មានហត្ថលេខា" if (s["signature_data"] and str(s["signature_data"]).startswith("data:image")) else "⚪ គ្មានហត្ថលេខា"
 
         p_cnt_row = cursor.execute("SELECT COUNT(*) FROM products WHERE supplier_name=? AND price_level='supplier'", (s["supplier_name"],)).fetchone()
@@ -4865,9 +4875,18 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
       st.dataframe(add_row_numbers(df_sups), use_container_width=True, hide_index=True)
 
       with st.expander("👁️ មើលព័ត៌មានលម្អិត & រូបភាពហត្ថលេខារបស់អ្នកផ្គត់ផ្គង់", expanded=False):
+        def _sup_summary_title(s):
+          if s["supply_level"] == "district":
+            desc = f"ស្រុក: {s['target_district']} ({s['target_commune'] or 'គ្រប់ឃុំ'})"
+          elif s["supply_level"] == "commune":
+            desc = f"ឃុំ: {s['target_commune'] or s['commune']}"
+          else:
+            desc = f"សាលា: {s['school_name']}"
+          return f"👤 {s['supplier_name']} ({desc}) - ID: {s['id']}"
+
         c_pick = st.selectbox(
             "ជ្រើសរើសអ្នកផ្គត់ផ្គង់ដើម្បីពិនិត្យលម្អិត៖",
-            [f"👤 {s['supplier_name']} ({'សាលា: ' + s['school_name'] if s['supply_level'] != 'commune' and s['school_name'] else 'ឃុំ: ' + s['target_commune']}) - ID: {s['id']}" for s in all_sups],
+            [_sup_summary_title(s) for s in all_sups],
             key="view_sup_detail_pick"
         )
         if c_pick:
@@ -4879,8 +4898,18 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
               st.markdown(f"#### 👤 {picked_s['supplier_name']} ({picked_s.get('gender', 'ប្រុស')})")
               st.markdown(f"📞 **លេខទូរស័ព្ទ៖** `{picked_s['phone'] or '-'}`")
               st.markdown(f"📍 **អាស័យដ្ឋានផ្ទាល់ខ្លួន៖** {picked_s['village']} {picked_s['commune']} {picked_s['district']} {picked_s['province']}")
-              st.markdown(f"🎯 **កម្រិតផ្គត់ផ្គង់៖** `{'តាមឃុំ (Commune Level)' if picked_s['supply_level'] == 'commune' else 'តាមសាលា (School Level)'}`")
-              st.markdown(f"🏫 **គោលដៅផ្គត់ផ្គង់៖** `{picked_s['school_name'] if picked_s['supply_level'] != 'commune' else picked_s['target_commune']}`")
+              lvl_text = "🏢 តាមស្រុក (District Level)" if picked_s["supply_level"] == "district" else ("🏛️ តាមឃុំ (Commune Level)" if picked_s["supply_level"] == "commune" else "🏫 តាមសាលា (School Level)")
+              st.markdown(f"🎯 **កម្រិតផ្គត់ផ្គង់៖** `{lvl_text}`")
+              if picked_s["supply_level"] == "district":
+                st.markdown(f"🏢 **ស្រុកគោលដៅ៖** `{picked_s['target_district']}`")
+                st.markdown(f"🏛️ **ឃុំដែលផ្គត់ផ្គង់ ({len(picked_s['target_commune'].split(',')) if picked_s['target_commune'] else 0} ឃុំ)៖** `{picked_s['target_commune']}`")
+                st.markdown(f"🏫 **សាលារៀនដែលបានចូលស្វ័យប្រវត្តិ ({len(picked_s['school_name'].split(',')) if picked_s['school_name'] else 0} សាលា)៖** `{picked_s['school_name']}`")
+              elif picked_s["supply_level"] == "commune":
+                st.markdown(f"🏛️ **ឃុំគោលដៅ៖** `{picked_s['target_commune'] or picked_s['commune']}`")
+                if picked_s["school_name"]:
+                  st.markdown(f"🏫 **សាលារៀនក្នុងឃុំ ({len(picked_s['school_name'].split(','))} សាលា)៖** `{picked_s['school_name']}`")
+              else:
+                st.markdown(f"🏫 **សាលារៀនគោលដៅ៖** `{picked_s['school_name']}`")
             with cd_col2:
               st.markdown("**✍️ ហត្ថលេខាអ្នកផ្គត់ផ្គង់៖**")
               if picked_s["signature_data"] and str(picked_s["signature_data"]).startswith("data:image"):
@@ -4893,9 +4922,17 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
   # ----------------- TAB 2: បន្ថែម / កែប្រែព័ត៌មាន & តម្លៃទំនិញ -----------------
   with sup_tab2:
     all_sups_edit = get_all_suppliers()
+    def _format_sup_opt(s):
+      if s["supply_level"] == "district":
+        loc_desc = f"ស្រុក: {s['target_district']} ({s['target_commune'] or 'គ្រប់ឃុំ'})"
+      elif s["supply_level"] == "commune":
+        loc_desc = f"ឃុំ: {s['target_commune'] or s['commune']}"
+      else:
+        loc_desc = f"សាលា: {s['school_name']}"
+      return f"👤 {s['supplier_name']} ({loc_desc}) - ID: {s['id']}"
+
     sup_select_options = ["➕ បង្កើតអ្នកផ្គត់ផ្គង់ថ្មី..."] + [
-        f"👤 {s['supplier_name']} ({'សាលា: ' + s['school_name'] if s['supply_level'] != 'commune' and s['school_name'] else 'ឃុំ: ' + (s['target_commune'] or s['commune'])}) - ID: {s['id']}"
-        for s in all_sups_edit
+        _format_sup_opt(s) for s in all_sups_edit
     ]
     
     st.markdown("#### 🎯 ជ្រើសរើសប្រតិបត្តិការ")
@@ -4964,37 +5001,137 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
 
     # 4. ព័ត៌មានអំពីការផ្គត់ផ្គង់
     st.markdown("#### 🚚 ៤. ព័ត៌មានអំពីការផ្គត់ផ្គង់ (កម្រិតផ្គត់ផ្គង់ & អាស័យដ្ឋានគោលដៅ)")
-    default_scope_idx = 1 if (cur_sup and cur_sup["supply_level"] == "school") else 0
+    if cur_sup and cur_sup["supply_level"] == "district":
+      default_scope_idx = 0
+    elif cur_sup and cur_sup["supply_level"] == "school":
+      default_scope_idx = 2
+    else:
+      default_scope_idx = 1
+
     c_scope_rad, c_target_loc = st.columns([1.5, 2.5])
     with c_scope_rad:
       chosen_scope = st.radio(
           "🎯 ជម្រើសកម្រិតផ្គត់ផ្គង់៖",
-          ["🏛️ តាមឃុំ (Commune Level)", "🏫 តាមសាលា (School Level)"],
+          ["🏢 តាមស្រុក (District Level)", "🏛️ តាមឃុំ (Commune Level)", "🏫 តាមសាលា (School Level)"],
           index=default_scope_idx,
           key=f"scope_radio_{sup_id_for_key}"
       )
+      is_district_level = "តាមស្រុក" in chosen_scope
       is_commune_level = "តាមឃុំ" in chosen_scope
+      is_school_level = "តាមសាលា" in chosen_scope
 
     with c_target_loc:
       st.markdown("**📍 អាស័យដ្ឋានគោលដៅផ្គត់ផ្គង់៖**")
-      col_loc1, col_loc2, col_loc3 = st.columns(3)
-      with col_loc1:
-        cur_t_prv = cur_sup["target_province"] if cur_sup and cur_sup["target_province"] else (cur_sup["province"] if cur_sup else "សៀមរាប")
-        provinces_all = get_provinces()
-        prv_idx = provinces_all.index(cur_t_prv) if cur_t_prv in provinces_all else 0
-        tgt_province = st.selectbox("ខេត្តគោលដៅ", provinces_all, index=prv_idx, key=f"t_prv_{sup_id_for_key}")
-      with col_loc2:
-        dist_options = get_districts(province=tgt_province)
-        cur_t_dst = cur_sup["target_district"] if cur_sup and cur_sup["target_district"] else (cur_sup["district"] if cur_sup else "")
-        dst_idx = dist_options.index(cur_t_dst) if cur_t_dst in dist_options else 0
-        tgt_district = st.selectbox("ក្រុង/ស្រុកគោលដៅ", dist_options if dist_options else ["ស្រីស្នំ"], index=dst_idx, key=f"t_dst_{sup_id_for_key}")
-      with col_loc3:
-        comm_options = get_communes(district=tgt_district)
-        cur_t_com = cur_sup["target_commune"] if cur_sup and cur_sup["target_commune"] else (cur_sup["commune"] if cur_sup else "")
-        com_idx = comm_options.index(cur_t_com) if cur_t_com in comm_options else 0
-        tgt_commune = st.selectbox("ឃុំ/សង្កាត់គោលដៅ", comm_options if comm_options else ["រោង"], index=com_idx, key=f"t_com_{sup_id_for_key}")
+      if is_district_level:
+        col_loc1, col_loc2 = st.columns(2)
+        with col_loc1:
+          cur_t_prv = cur_sup["target_province"] if cur_sup and cur_sup["target_province"] else (cur_sup["province"] if cur_sup else "សៀមរាប")
+          provinces_all = get_provinces()
+          prv_idx = provinces_all.index(cur_t_prv) if cur_t_prv in provinces_all else 0
+          tgt_province = st.selectbox("ខេត្តគោលដៅ", provinces_all, index=prv_idx, key=f"t_prv_{sup_id_for_key}")
+        with col_loc2:
+          dist_options = get_districts(province=tgt_province)
+          cur_t_dst = cur_sup["target_district"] if cur_sup and cur_sup["target_district"] else (cur_sup["district"] if cur_sup else "")
+          dst_idx = dist_options.index(cur_t_dst) if cur_t_dst in dist_options else 0
+          tgt_district = st.selectbox("ក្រុង/ស្រុកគោលដៅ", dist_options if dist_options else ["ស្រីស្នំ"], index=dst_idx, key=f"t_dst_{sup_id_for_key}")
+      else:
+        col_loc1, col_loc2, col_loc3 = st.columns(3)
+        with col_loc1:
+          cur_t_prv = cur_sup["target_province"] if cur_sup and cur_sup["target_province"] else (cur_sup["province"] if cur_sup else "សៀមរាប")
+          provinces_all = get_provinces()
+          prv_idx = provinces_all.index(cur_t_prv) if cur_t_prv in provinces_all else 0
+          tgt_province = st.selectbox("ខេត្តគោលដៅ", provinces_all, index=prv_idx, key=f"t_prv_{sup_id_for_key}")
+        with col_loc2:
+          dist_options = get_districts(province=tgt_province)
+          cur_t_dst = cur_sup["target_district"] if cur_sup and cur_sup["target_district"] else (cur_sup["district"] if cur_sup else "")
+          dst_idx = dist_options.index(cur_t_dst) if cur_t_dst in dist_options else 0
+          tgt_district = st.selectbox("ក្រុង/ស្រុកគោលដៅ", dist_options if dist_options else ["ស្រីស្នំ"], index=dst_idx, key=f"t_dst_{sup_id_for_key}")
+        with col_loc3:
+          comm_options = get_communes(district=tgt_district, province=tgt_province)
+          cur_t_com = cur_sup["target_commune"] if cur_sup and cur_sup["target_commune"] else (cur_sup["commune"] if cur_sup else "")
+          com_idx = comm_options.index(cur_t_com) if cur_t_com in comm_options else 0
+          tgt_commune = st.selectbox("ឃុំ/សង្កាត់គោលដៅ", comm_options if comm_options else ["រោង"], index=com_idx, key=f"t_com_{sup_id_for_key}")
 
-    if not is_commune_level:
+    selected_communes = []
+    selected_schools = []
+    auto_schools = []
+
+    if is_district_level:
+      # ទាញយកឃុំទាំងអស់ក្នុងស្រុកនេះ (ទាំងពី locations និង schools)
+      comm_candidates = list(get_communes(district=tgt_district, province=tgt_province))
+      sch_comms = cursor.execute("SELECT DISTINCT commune FROM schools WHERE district=? AND commune IS NOT NULL AND TRIM(commune) != ''", (tgt_district,)).fetchall()
+      for sc_r in sch_comms:
+        if sc_r[0] and sc_r[0] not in comm_candidates:
+          comm_candidates.append(sc_r[0])
+      comm_candidates = sorted(list(set(comm_candidates)))
+
+      cur_t_com_raw = cur_sup["target_commune"] if (cur_sup and cur_sup["supply_level"] == "district") else ""
+      cur_saved_comms = [c.strip() for c in str(cur_t_com_raw).split(",") if c.strip()]
+
+      st.markdown(f"##### 🏛️ ជ្រើសរើសឃុំក្នុងស្រុក **{tgt_district}** (សូមចុចជ្រើសរើសឃុំដែលត្រូវផ្គត់ផ្គង់) ៖")
+      col_all_com, col_com_note = st.columns([1.5, 3.5])
+      with col_all_com:
+        chk_all_dist_comm = st.checkbox("☑️ ជ្រើសរើសគ្រប់ឃុំទាំងអស់ក្នុងស្រុកនេះ", key=f"chk_all_dist_comm_{sup_id_for_key}")
+      with col_com_note:
+        st.caption(f"💡 ក្នុងស្រុក **{tgt_district}** មានឃុំចំនួន **{len(comm_candidates)}** ឃុំ។ សាលារៀនទាំងអស់ក្នុងឃុំដែលបានជ្រើសរើសនឹងត្រូវបញ្ចូលដោយស្វ័យប្រវត្តិ។")
+
+      if comm_candidates:
+        num_cols = min(len(comm_candidates), 4) if len(comm_candidates) > 0 else 1
+        com_grid_cols = st.columns(num_cols)
+        for i, comm_name in enumerate(comm_candidates):
+          grid_col = com_grid_cols[i % num_cols]
+          with grid_col:
+            def_com_chk = True if chk_all_dist_comm else (comm_name in cur_saved_comms)
+            if st.checkbox(f"🏛️ ឃុំ{comm_name}", value=def_com_chk, key=f"chk_com_pick_{sup_id_for_key}_{comm_name}"):
+              selected_communes.append(comm_name)
+      else:
+        st.warning(f"⚠️ មិនទាន់មានទិន្នន័យឃុំក្នុងស្រុក {tgt_district} នៅឡើយទេ។")
+
+      extra_com = st.text_input("➕ វាយបញ្ចូលឈ្មោះឃុំបន្ថែម (ប្រសិនបើគ្មានក្នុងបញ្ជីខាងលើ)", key=f"t_com_extra_{sup_id_for_key}").strip()
+      if extra_com and extra_com not in selected_communes:
+        selected_communes.append(extra_com)
+
+      # រកសាលារៀនទាំងអស់ក្នុងឃុំដែលបានជ្រើសរើសស្វ័យប្រវត្តិ
+      for c in selected_communes:
+        c_clean = c.replace("ឃុំ", "").strip()
+        schs_c = cursor.execute("""
+          SELECT DISTINCT name FROM schools 
+          WHERE (commune=? OR commune=? OR commune LIKE ('%' || ? || '%'))
+            AND TRIM(name) != ''
+          ORDER BY name
+        """, (c, c_clean, c_clean)).fetchall()
+        for sr in schs_c:
+          s_name = sr[0].strip()
+          if s_name and s_name not in auto_schools:
+            auto_schools.append(s_name)
+
+      tgt_commune = ", ".join(selected_communes)
+      tgt_school = ", ".join(auto_schools)
+
+      if selected_communes:
+        st.success(f"✅ បានជ្រើសរើស **{len(selected_communes)} ឃុំ** ៖ `{tgt_commune}`")
+        if auto_schools:
+          st.info(f"🏫 **សាលារៀនទាំងអស់ក្នុងឃុំទាំងនោះចំនួន {len(auto_schools)} សាលា ត្រូវបានបញ្ចូលដោយស្វ័យប្រវត្តិ ៖**")
+          with st.expander(f"👁️ មើលបញ្ជីសាលារៀនទាំង {len(auto_schools)} សាលា ដែលបានចូលស្វ័យប្រវត្តិ", expanded=False):
+            sch_view_cols = st.columns(3)
+            for idx_s, s_n in enumerate(auto_schools):
+              sch_view_cols[idx_s % 3].markdown(f"- 🏫 **{s_n}**")
+        else:
+          st.warning("⚠️ មិនទាន់មានឈ្មោះសាលារៀនដែលបានចុះបញ្ជីក្នុងឃុំទាំងនេះនៅឡើយទេ។ (អ្នកអាចបន្ថែមឈ្មោះសាលាក្នុងផ្នែកគ្រប់គ្រងទីតាំង)")
+      else:
+        st.warning("⚠️ សូមធីកជ្រើសរើសយ៉ាងហោចណាស់ ឃុំ ១ ក្នុងស្រុកនេះ!")
+
+    elif is_commune_level:
+      auto_comm_schools = get_schools_by_commune(tgt_commune)
+      tgt_school = ", ".join(auto_comm_schools)
+      st.info(f"🏛️ អ្នកផ្គត់ផ្គង់នេះ ផ្គត់ផ្គង់គ្រប់សាលារៀនទាំងអស់នៅក្នុង **ឃុំ{tgt_commune}** (មានចំនួន {len(auto_comm_schools)} សាលា)")
+      if auto_comm_schools:
+        with st.expander(f"👁️ មើលបញ្ជីសាលារៀនក្នុងឃុំ {tgt_commune} ({len(auto_comm_schools)} សាលា)", expanded=False):
+          sch_view_cols = st.columns(3)
+          for idx_s, s_n in enumerate(auto_comm_schools):
+            sch_view_cols[idx_s % 3].markdown(f"- 🏫 **{s_n}**")
+
+    else:
       school_candidates = get_schools_by_commune(tgt_commune) if tgt_commune else get_all_schools()
       if not school_candidates:
         school_candidates = get_all_schools()
@@ -5010,7 +5147,6 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
       with col_sch_note:
         st.caption(f"💡 ក្នុងឃុំ **{tgt_commune}** មានសាលារៀនចំនួន **{len(school_candidates)}** សាលា។")
 
-      selected_schools = []
       sch_grid_cols = st.columns(3)
       for i, sch_name in enumerate(school_candidates):
         grid_col = sch_grid_cols[i % 3]
@@ -5029,9 +5165,6 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
         st.success(f"✅ បានជ្រើសរើស **{len(selected_schools)} សាលា**៖ {tgt_school}")
       else:
         st.warning("⚠️ សូមធីកជ្រើសរើសយ៉ាងហោចណាស់សាលារៀន ១ សម្រាប់អ្នកផ្គត់ផ្គង់នេះ!")
-    else:
-      tgt_school = ""
-      st.info(f"🏛️ អ្នកផ្គត់ផ្គង់នេះ ផ្គត់ផ្គង់គ្រប់សាលារៀនទាំងអស់នៅក្នុង **ឃុំ{tgt_commune}**")
 
     # 5. កំណត់តម្លៃទំនិញផ្គត់ផ្គង់ & ប្រៀបធៀបតម្លៃគោល
     st.markdown("#### 💰 ៥. កំណត់តម្លៃទំនិញផ្គត់ផ្គង់ & ផ្ទៀងផ្ទាត់ធៀបនឹងតម្លៃគោល")
@@ -5270,13 +5403,15 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
     if btn_save_sup:
       if not val_name:
         st.error("⚠️ សូមវាយបញ្ចូលឈ្មោះអ្នកផ្គត់ផ្គង់!")
-      elif not is_commune_level and not tgt_school:
+      elif is_district_level and not selected_communes:
+        st.error("⚠️ សូមធីកជ្រើសរើសយ៉ាងហោចណាស់ ឃុំ ១ ក្នុងស្រុកនេះ!")
+      elif is_school_level and not selected_schools:
         st.error("⚠️ សូមធីកជ្រើសរើសយ៉ាងហោចណាស់សាលារៀន ១ សម្រាប់អ្នកផ្គត់ផ្គង់នេះ!")
       else:
         final_sig_data = uploaded_sig_data if uploaded_sig_data is not None else (existing_sig_val or "")
-        sup_lvl_str = "commune" if is_commune_level else "school"
+        sup_lvl_str = "district" if is_district_level else ("commune" if is_commune_level else "school")
         saved_id = save_or_update_supplier(
-            school_name=tgt_school if not is_commune_level else "",
+            school_name=tgt_school,
             supplier_name=val_name,
             village=val_vill,
             commune=val_comm,
