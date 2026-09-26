@@ -312,6 +312,8 @@ def init_db():
     cursor.execute("ALTER TABLE products ADD COLUMN school_name TEXT DEFAULT ''")
   if "price_level" not in prod_cols:
     cursor.execute("ALTER TABLE products ADD COLUMN price_level TEXT DEFAULT 'commune'")
+  if "supplier_name" not in prod_cols:
+    cursor.execute("ALTER TABLE products ADD COLUMN supplier_name TEXT DEFAULT ''")
 
   # Update price_level and province/district for products
   cursor.execute("UPDATE products SET price_level='commune' WHERE price_level IS NULL OR price_level=''")
@@ -1003,12 +1005,13 @@ def get_commune_phase_dates(commune=None, school_name=None):
   return def_p1_s, def_p1_e, def_p2_s, def_p2_e
 
 
-def get_products_map(school_name=None, commune=None):
+def get_products_map(school_name=None, commune=None, supplier_name=None):
   """
-  ទាញយកបញ្ជីមុខទំនិញ និងតម្លៃសម្រាប់សាលា ឬឃុំ៖
+  ទាញយកបញ្ជីមុខទំនិញ និងតម្លៃសម្រាប់សាលា ឃុំ ឬអ្នកផ្គត់ផ្គង់៖
   ១. យកតម្លៃកំណត់តាមឃុំ (Commune Level) ជាគោល
   ២. ប្រសិនបើសាលានោះមានកំណត់តម្លៃដោយឡែក (School Level) យកតម្លៃសាលាមកជំនួស (Override)
-  ៣. បើគ្មានក្នុងឃុំ/សាលា ទាញយកទំនិញដែលមានស្រាប់ក្នុងប្រព័ន្ធ ឬកាតាឡុកស្ដង់ដារ
+  ៣. ប្រសិនបើមានកំណត់តាមអ្នកផ្គត់ផ្គង់ (Supplier Level) យកមកជំនួស/បន្ថែម
+  ៤. បំពេញទំនិញទាំងអស់ពីកាតាឡុកស្ដង់ដារ (STANDARD_PRODUCT_CATALOG) ដើម្បីកុំឲ្យបាត់មុខទំនិញ
   """
   res_map = {}
   
@@ -1052,7 +1055,34 @@ def get_products_map(school_name=None, commune=None):
           "scope": "សាលារៀន"
       }
 
-  # ៣. ប្រសិនបើនៅតែទទេ ទាញយកទំនិញដែលមានក្នុងប្រព័ន្ធ
+  # ៣. ប្រសិនបើមានកំណត់តាមអ្នកផ្គត់ផ្គង់ (Supplier Level)
+  if supplier_name and supplier_name not in ["-- ជ្រើសរើសអ្នកផ្គត់ផ្គង់ --", ""]:
+    try:
+      sup_rows = cursor.execute(
+          """SELECT item_name, price_phase1, price_phase2, price_avg, 
+                    phase1_start, phase1_end, phase2_start, phase2_end, category 
+             FROM products 
+             WHERE supplier_name=? AND (
+                 (school_name=? AND school_name IS NOT NULL AND school_name != '') OR 
+                 (commune=? AND commune IS NOT NULL AND commune != '') OR
+                 price_level='supplier' OR school_name IS NULL OR school_name=''
+             )""",
+          (supplier_name, school_name or "", commune or "")
+      ).fetchall()
+      for r in sup_rows:
+        res_map[r[0]] = {
+            "price_phase1": float(r[1] or 0),
+            "price_phase2": float(r[2] or 0),
+            "price_avg": float(r[3] or 0),
+            "p1_start": r[4], "p1_end": r[5],
+            "p2_start": r[6], "p2_end": r[7],
+            "category": r[8] or classify_item_category(r[0]),
+            "scope": "អ្នកផ្គត់ផ្គង់"
+        }
+    except Exception:
+      pass
+
+  # ៤. បំពេញទំនិញដែលមានស្រាប់ក្នុងប្រព័ន្ធបើទទេ
   if not res_map:
     all_rows = cursor.execute(
         """SELECT item_name, price_phase1, price_phase2, price_avg, 
@@ -1070,10 +1100,10 @@ def get_products_map(school_name=None, commune=None):
           "scope": "ប្រព័ន្ធ"
       }
 
-  # ៤. ប្រសិនបើក្នុងប្រព័ន្ធគ្មានសោះ បំពេញដោយកាតាឡុកស្ដង់ដារ
-  if not res_map:
-    cur_y = date.today().year
-    for item in STANDARD_PRODUCT_CATALOG:
+  # ៥. បំពេញគ្រប់មុខទំនិញដែលនៅសល់ពីកាតាឡុកស្ដង់ដារ (STANDARD_PRODUCT_CATALOG)
+  cur_y = date.today().year
+  for item in STANDARD_PRODUCT_CATALOG:
+    if item["name"] not in res_map or res_map[item["name"]]["price_phase1"] <= 0:
       res_map[item["name"]] = {
           "price_phase1": item["price_phase1"],
           "price_phase2": item["price_phase2"],
@@ -1081,7 +1111,7 @@ def get_products_map(school_name=None, commune=None):
           "p1_start": f"{cur_y}-01-01", "p1_end": f"{cur_y}-06-30",
           "p2_start": f"{cur_y}-07-01", "p2_end": f"{cur_y}-12-31",
           "category": item["category"],
-          "scope": "ស្ដង់ដារ"
+          "scope": "កាតាឡុកស្ដង់ដារ"
       }
 
   return res_map
@@ -1495,11 +1525,8 @@ def generate_annex3_html(district, commune, school_name, voucher_no, invoice_dat
   tot_qty_str = f"{tot_qty:g}" if tot_qty % 1 != 0 else f"{int(tot_qty)}"
   tot_amount_str = f"{int(tot_amount):,} ៛" if tot_amount % 1 == 0 else f"{tot_amount:,.2f} ៛"
   khmer_date_str = format_khmer_date(invoice_date)
-  if consumption_date:
-    khmer_eat_str = format_khmer_date(consumption_date)
-    date_display_str = f"ថ្ងៃដាក់៖ {khmer_date_str} &nbsp;|&nbsp; ថ្ងៃស៊ី/ញ៉ាំ៖ {khmer_eat_str}"
-  else:
-    date_display_str = khmer_date_str
+  # បង្ហាញត្រឹមតែកាលបរិច្ឆេទខាងមុខ ដោយលុបពាក្យថ្ងៃដាក់ចេញ
+  date_display_str = khmer_date_str
   v_display = f"{voucher_no}" if voucher_no else "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"
 
   html_template = f"""<!DOCTYPE html>
@@ -1511,7 +1538,22 @@ def generate_annex3_html(district, commune, school_name, voucher_no, invoice_dat
   
   @page {{
     size: A5 portrait;
-    margin: 5mm 8mm 4mm 8mm;
+    margin: 4mm 6mm 4mm 6mm;
+  }}
+
+  @media print {{
+    .no-print {{
+      display: none !important;
+    }}
+    @page {{
+      size: A5 portrait;
+      margin: 4mm 6mm 4mm 6mm;
+    }}
+    body {{
+      margin: 0 !important;
+      padding: 0 !important;
+      width: 100% !important;
+    }}
   }}
   
   * {{
@@ -1786,15 +1828,22 @@ def generate_annex3_html(district, commune, school_name, voucher_no, invoice_dat
   }}
   
   .doc-copy-mark {{
-    text-align: right;
+    text-align: center;
     color: #b91c1c;
-    font-size: 9px;
+    font-size: 9.5px;
     font-weight: 700;
-    margin-top: 2px;
+    margin-top: 3px;
+    letter-spacing: 0.5px;
   }}
 </style>
 </head>
 <body>
+
+<div class="no-print" style="display: flex; justify-content: flex-end; margin-bottom: 5px; padding: 2px 0;">
+  <button onclick="window.print()" style="background: #0284c7; color: #fff; border: 1px solid #0284c7; padding: 5px 14px; border-radius: 4px; font-family: inherit; font-size: 11px; font-weight: bold; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);">
+    🖨️ បោះពុម្ពប័ណ្ណទទួលស្បៀង A5 (Print)
+  </button>
+</div>
 
 <div class="top-bar">
   <div class="annex-tag">ឧបសម្ពន្ធ ៣</div>
@@ -1929,19 +1978,22 @@ def generate_annex3_pdf(district, commune, school_name, voucher_no, invoice_date
         with open(html_path, "w", encoding="utf-8") as f:
           f.write(html)
 
-        cmd = [
-            browser_exe,
-            "--headless",
-            "--disable-gpu",
-            "--run-all-compositor-stages-before-draw",
-            "--no-pdf-header-footer",
-            f"--print-to-pdf={pdf_path}",
-            html_path,
-        ]
-        res = subprocess.run(cmd, capture_output=True, timeout=20)
-        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 1000:
-          with open(pdf_path, "rb") as f:
-            return f.read()
+        for h_flag in ["--headless=new", "--headless"]:
+          cmd = [
+              browser_exe,
+              h_flag,
+              "--no-sandbox",
+              "--disable-dev-shm-usage",
+              "--disable-gpu",
+              "--run-all-compositor-stages-before-draw",
+              "--no-pdf-header-footer",
+              f"--print-to-pdf={pdf_path}",
+              html_path,
+          ]
+          res = subprocess.run(cmd, capture_output=True, timeout=20)
+          if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 1000:
+            with open(pdf_path, "rb") as f:
+              return f.read()
     except Exception:
       pass
 
@@ -2054,9 +2106,7 @@ def write_invoice_block_to_ws(
   # R7: A:H merged Date
   r += 1
   ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
-  date_label = f"ថ្ងៃដាក់៖ {format_khmer_date(invoice_date)}"
-  if consumption_date:
-    date_label += f" | ថ្ងៃស៊ី/ញ៉ាំ៖ {format_khmer_date(consumption_date)}"
+  date_label = format_khmer_date(invoice_date)
   ws.cell(row=r, column=1, value=date_label).font = font_hand
   ws.cell(row=r, column=1).alignment = align_right
   ws.row_dimensions[r].height = 16.0
@@ -4283,16 +4333,52 @@ elif menu in ["📦 បញ្ជីមុខទំនិញ និងតម្�
   # ជម្រើសកម្រិតនៃការកំណត់តម្លៃ
   level_choice = st.radio(
       "🎯 ជម្រើសកម្រិតនៃការកំណត់តម្លៃទំនិញ៖",
-      ["🏛️ កំណត់តាមឃុំ/សង្កាត់ (Commune Level - អនុវត្តចំពោះគ្រប់សាលាក្នុងឃុំ)", "🏫 កំណត់តាមសាលារៀន (School Level - តម្លៃជាក់លាក់តាមសាលានីមួយៗ)"],
+      [
+          "🏛️ កំណត់តាមឃុំ/សង្កាត់ (Commune Level - អនុវត្តចំពោះគ្រប់សាលាក្នុងឃុំ)", 
+          "🏫 កំណត់តាមសាលារៀន (School Level - តម្លៃជាក់លាក់តាមសាលានីមួយៗ)",
+          "🚚 កំណត់តាមអ្នកផ្គត់ផ្គង់ (Supplier Level - តម្លៃតាមកិច្ចសន្យាអ្នកផ្គត់ផ្គង់)",
+      ],
       index=0,
       horizontal=True,
       key="prod_level_choice"
   )
   is_school_mode = "តាមសាលារៀន" in level_choice
+  is_supplier_mode = "តាមអ្នកផ្គត់ផ្គង់" in level_choice
 
   all_provinces = get_provinces()
 
-  if is_school_mode:
+  if is_supplier_mode:
+    all_sups = get_all_suppliers()
+    sup_names = sorted(list(set([s["supplier_name"] for s in all_sups if s.get("supplier_name")])))
+    col_sup1, col_sup2 = st.columns([1.5, 1.5])
+    with col_sup1:
+      sup_choice = st.selectbox(
+          "🚚 ជ្រើសរើសអ្នកផ្គត់ផ្គង់",
+          ["-- ជ្រើសរើសអ្នកផ្គត់ផ្គង់ --"] + sup_names + ["➕ វាយឈ្មោះអ្នកផ្គត់ផ្គង់ថ្មី..."],
+          key="prod_sup_choice"
+      )
+      if sup_choice == "➕ វាយឈ្មោះអ្នកផ្គត់ផ្គង់ថ្មី...":
+        sup_val = st.text_input("វាយឈ្មោះអ្នកផ្គត់ផ្គង់ថ្មី", key="prod_sup_in").strip()
+      elif sup_choice != "-- ជ្រើសរើសអ្នកផ្គត់ផ្គង់ --":
+        sup_val = sup_choice
+      else:
+        sup_val = ""
+    with col_sup2:
+      sup_sch_choice = st.selectbox(
+          "🏫 អនុវត្តចំពោះសាលា (ជម្រើសបន្ថែម)",
+          ["-- គ្រប់សាលារបស់អ្នកផ្គត់ផ្គង់នេះ --"] + get_all_schools(),
+          key="prod_sup_sch"
+      )
+      s_val = sup_sch_choice if sup_sch_choice != "-- គ្រប់សាលារបស់អ្នកផ្គត់ផ្គង់នេះ --" else ""
+    c_val = ""
+    p_val = None
+    d_val = None
+    if sup_val:
+      st.success(f"📍 **គោលដៅកំណត់តម្លៃ៖** អ្នកផ្គត់ផ្គង់ **«{sup_val}»** {f'(សាលា: {s_val})' if s_val else '(គ្រប់សាលាដែលផ្គត់ផ្គង់)'}")
+    else:
+      st.warning("⚠️ សូមជ្រើសរើស **អ្នកផ្គត់ផ្គង់** ខាងលើដើម្បីចាប់ផ្ដើមកំណត់តម្លៃ!")
+
+  elif is_school_mode:
     col_mp, col_md, col_mc, col_ms = st.columns([1, 1, 1, 1.3])
     with col_mp:
       p_choice = st.selectbox("ខេត្ត/ក្រុង", ["-- ទាំងអស់ --"] + all_provinces, key="prod_p_sch")
@@ -4363,7 +4449,13 @@ elif menu in ["📦 បញ្ជីមុខទំនិញ និងតម្�
     else:
       st.warning("⚠️ សូមជ្រើសរើស **ឃុំ/សង្កាត់** ខាងលើដើម្បីចាប់ផ្ដើមកំណត់តម្លៃ ឬពិនិត្យមុខទំនិញ!")
 
-  target_label = f"សាលារៀន «{s_val}»" if is_school_mode and s_val else (f"ឃុំ «{c_val}»" if c_val else "")
+  if is_supplier_mode:
+    target_label = f"អ្នកផ្គត់ផ្គង់ «{sup_val}»" + (f" (សាលា «{s_val}»)" if s_val else "")
+  elif is_school_mode:
+    target_label = f"សាលារៀន «{s_val}»" if s_val else ""
+  else:
+    target_label = f"ឃុំ «{c_val}»" if c_val else ""
+
 
   prod_tab1, prod_tab2, prod_tab3, prod_tab4 = st.tabs([
       "➕ បន្ថែមមុខទំនិញថ្មី",
@@ -4466,9 +4558,11 @@ elif menu in ["📦 បញ្ជីមុខទំនិញ និងតម្�
     st.metric("📊 តម្លៃមធ្យម (គណនាស្វ័យប្រវត្តិ)", format_riel(auto_avg))
 
     if st.button("💾 រក្សាទុកមុខទំនិញ", use_container_width=True, type="primary"):
-      if is_school_mode and not s_val:
+      if is_supplier_mode and not sup_val:
+        st.error("សូមជ្រើសរើស ឬវាយបញ្ចូលឈ្មោះអ្នកផ្គត់ផ្គង់សិន!")
+      elif is_school_mode and not s_val:
         st.error("សូមជ្រើសរើស ឬវាយបញ្ចូលឈ្មោះសាលារៀនសិន!")
-      elif not is_school_mode and not c_val:
+      elif not is_school_mode and not is_supplier_mode and not c_val:
         st.error("សូមជ្រើសរើស ឬវាយបញ្ចូលឃុំសិន!")
       elif not p_name.strip():
         st.error("សូមជ្រើសរើស ឬវាយបញ្ចូលឈ្មោះមុខទំនិញ!")
@@ -4480,13 +4574,17 @@ elif menu in ["📦 បញ្ជីមុខទំនិញ និងតម្�
         target_prov = p_val or ""
         target_dist = d_val or ""
         target_comm = c_val or ""
-        target_sch = s_val if is_school_mode else ""
-        target_lvl = "school" if is_school_mode else "commune"
+        target_sch = s_val or ""
+        target_sup = sup_val if is_supplier_mode else ""
+        target_lvl = "supplier" if is_supplier_mode else ("school" if is_school_mode else "commune")
 
         # ពិនិត្យថាមានទំនិញនេះស្រាប់ក្នុង Scope នេះឬនៅ
         chk_sql = "SELECT id FROM products WHERE item_name=? AND price_level=?"
         chk_params = [p_name.strip(), target_lvl]
-        if is_school_mode:
+        if is_supplier_mode:
+          chk_sql += " AND supplier_name=? AND school_name=?"
+          chk_params.extend([target_sup, target_sch])
+        elif is_school_mode:
           chk_sql += " AND school_name=?"
           chk_params.append(target_sch)
         else:
@@ -4500,11 +4598,11 @@ elif menu in ["📦 បញ្ជីមុខទំនិញ និងតម្�
               UPDATE products 
               SET price_phase1=?, price_phase2=?, price_avg=?,
                   phase1_start=?, phase1_end=?, phase2_start=?, phase2_end=?,
-                  category=?, province=?, district=?, commune=?, school_name=?, price_level=?
+                  category=?, province=?, district=?, commune=?, school_name=?, price_level=?, supplier_name=?
               WHERE id=?
               """,
               (p_price1, p_price2, auto_avg, str(p1_start), str(p1_end), str(p2_start), str(p2_end),
-               p_cat, target_prov, target_dist, target_comm, target_sch, target_lvl, row_chk[0])
+               p_cat, target_prov, target_dist, target_comm, target_sch, target_lvl, target_sup, row_chk[0])
           )
           st.success(f"🎉 បានធ្វើបច្ចុប្បន្នភាពមុខទំនិញ '{p_name}' [{format_category_badge(p_cat)}] សម្រាប់ {target_label} (តម្លៃមធ្យម: {format_riel(auto_avg)}) រួចរាល់!")
         else:
@@ -4512,12 +4610,12 @@ elif menu in ["📦 បញ្ជីមុខទំនិញ និងតម្�
               """
               INSERT INTO products (item_name, commune, price_phase1, price_phase2, price_avg,
                                     phase1_start, phase1_end, phase2_start, phase2_end, category,
-                                    province, district, school_name, price_level)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                    province, district, school_name, price_level, supplier_name)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
               """,
               (p_name.strip(), target_comm, p_price1, p_price2, auto_avg,
                str(p1_start), str(p1_end), str(p2_start), str(p2_end), p_cat,
-               target_prov, target_dist, target_sch, target_lvl)
+               target_prov, target_dist, target_sch, target_lvl, target_sup)
           )
           st.success(f"🎉 បានរក្សាទុកមុខទំនិញ '{p_name}' [{format_category_badge(p_cat)}] សម្រាប់ {target_label} (តម្លៃមធ្យម: {format_riel(auto_avg)}) ដោយជោគជ័យ!")
         conn.commit()
@@ -5216,7 +5314,7 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
     with st.expander("✏️ បន្ថែម / កែសម្រួលទំនិញក្នុងវិក្កយបត្រនេះ", expanded=False):
       col_add1, col_add2, col_add3, col_add4, col_add5 = st.columns([2, 1, 1, 1.2, 1])
       with col_add1:
-        prod_info_map = get_products_map(school_name=inv_school, commune=act_commune)
+        prod_info_map = get_products_map(school_name=inv_school, commune=act_commune, supplier_name=supplier_name)
         prod_map = {p: (info["price_phase1"], info["price_phase2"]) for p, info in prod_info_map.items()}
         prod_choices = list(prod_map.keys()) + ["➕ វាយទំនិញថ្មី..."]
         quick_item_sel = st.selectbox("មុខទំនិញ", prod_choices, key="quick_add_item")
@@ -5256,6 +5354,25 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
             st.rerun()
 
       if not df_inv_full.empty:
+        col_price_info, col_price_btn = st.columns([2.2, 1.2])
+        with col_price_info:
+          st.caption(f"🏷️ **តម្លៃសម្រាប់គណនា៖** ផ្អែកលើអ្នកផ្គត់ផ្គង់ **«{supplier_name}»** | សាលា **«{inv_school}»** | ឃុំ **«{act_commune}»**")
+        with col_price_btn:
+          if st.button("🔄 គណនាតម្លៃឡើងវិញស្វ័យប្រវត្ត", key="btn_refresh_inv_prices", use_container_width=True):
+            recalc_cnt = 0
+            for _, r_it in df_inv_full.iterrows():
+              it_nm = r_it["មុខទំនិញ"]
+              it_ph = r_it["វគ្គ"] if "វគ្គ" in r_it and r_it["វគ្គ"] else "វគ្គ១"
+              if it_nm in prod_info_map:
+                u_p = prod_info_map[it_nm]["price_phase1"] if it_ph == "វគ្គ១" else prod_info_map[it_nm]["price_phase2"]
+                if u_p > 0:
+                  tot_p = float(r_it["បរិមាណ"]) * u_p
+                  cursor.execute("UPDATE daily_records SET unit_price=?, total_price=? WHERE id=?", (u_p, tot_p, r_it["id"]))
+                  recalc_cnt += 1
+            conn.commit()
+            st.success(f"✅ បានកែសម្រួលតម្លៃ {recalc_cnt} មុខទំនិញទៅតាមតម្លៃអ្នកផ្គត់ផ្គង់ សាលា និងឃុំ!")
+            st.rerun()
+
         st.markdown("###### បញ្ជីទំនិញបច្ចុប្បន្ន (អាចលុបបាន):")
         for _, row_item in df_inv_full.iterrows():
           c_del1, c_del2, c_del3, c_del4 = st.columns([3, 1.5, 2, 1])
@@ -5271,15 +5388,7 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
               conn.commit()
               st.rerun()
 
-    # ៤. ប៊ូតុងបញ្ជា ទាញយកឯកសារ (PDF, Excel, HTML) និងរក្សាទុក
-    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns([1.2, 1.2, 1.2, 1])
-
-    with col_btn1:
-      if st.button("💾 រក្សាទុកលេខសក្ខីប័ត្រ", key="btn_save_vno", use_container_width=True):
-        save_voucher_no(inv_school, str(inv_date), cur_voucher_no)
-        st.success(f"បានរក្សាទុកលេខសក្ខីប័ត្រ {cur_voucher_no} សម្រាប់សាលា {inv_school} កាលបរិច្ឆេទ {inv_date}!")
-        st.rerun()
-
+    # បង្កើតកូដ HTML វិក្កយបត្រផ្លូវការ A5
     html_code = generate_annex3_html(
         district=act_district,
         commune=act_commune,
@@ -5294,6 +5403,68 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
         receiver_sig=active_rec_sig,
         consumption_date=inv_eat_date
     )
+
+    # ៤. ប៊ូតុងបញ្ជា ទាញយកឯកសារ (Print, PDF, Excel, HTML) និងរក្សាទុក
+    col_btn1, col_btn_print, col_btn2, col_btn3, col_btn4 = st.columns([1.1, 1.1, 1.1, 1.1, 0.9])
+
+    with col_btn1:
+      if st.button("💾 រក្សាទុកសក្ខីប័ត្រ", key="btn_save_vno", use_container_width=True):
+        save_voucher_no(inv_school, str(inv_date), cur_voucher_no)
+        st.success(f"បានរក្សាទុកលេខសក្ខីប័ត្រ {cur_voucher_no} សម្រាប់សាលា {inv_school} កាលបរិច្ឆេទ {inv_date}!")
+        st.rerun()
+
+    with col_btn_print:
+      clean_html_str = html_code.replace("</script>", "<\\/script>")
+      print_btn_code = f"""
+      <!DOCTYPE html>
+      <html>
+      <head><meta charset="utf-8">
+      <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        .p-btn {{
+          width: 100%;
+          height: 38px;
+          background: #0284c7;
+          color: #ffffff;
+          border: none;
+          border-radius: 6px;
+          font-size: 13.5px;
+          font-weight: 600;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          transition: background-color 0.15s ease;
+        }}
+        .p-btn:hover {{
+          background: #0369a1;
+        }}
+      </style>
+      </head>
+      <body>
+        <button class="p-btn" onclick="openPrint()">🖨️ បោះពុម្ព (Print)</button>
+        <script>
+          function openPrint() {{
+            var pw = window.open('', '_blank');
+            if (pw) {{
+              pw.document.open();
+              pw.document.write({json.dumps(clean_html_str)});
+              pw.document.close();
+              pw.focus();
+              setTimeout(function() {{
+                pw.print();
+              }}, 450);
+            }} else {{
+              alert('សូមអនុញ្ញាត Popups ក្នុងកម្មវិធីរុករក (Browser) ដើម្បីបោះពុម្ព!');
+            }}
+          }}
+        </script>
+      </body>
+      </html>
+      """
+      st.components.v1.html(print_btn_code, height=42)
 
     with col_btn2:
       pdf_bytes = generate_annex3_pdf(
@@ -5311,7 +5482,7 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
           consumption_date=inv_eat_date
       )
       st.download_button(
-          "📄 ទាញយកជា PDF (ឧបសម្ពន្ធ ៣)",
+          "📄 ទាញយកជា PDF",
           data=pdf_bytes,
           file_name=f"ឧបសម្ពន្ធ៣_{inv_school}_{inv_date}_{cur_voucher_no}.pdf",
           mime="application/pdf",
@@ -5334,7 +5505,7 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
           consumption_date=inv_eat_date
       )
       st.download_button(
-          "📥 ទាញយកជា Excel (គំរូ Invoice 1)",
+          "📥 ទាញយកជា Excel",
           data=excel_bytes,
           file_name=f"Invoice1_{inv_school}_{inv_date}_{cur_voucher_no}.xlsx",
           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -5343,7 +5514,7 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
 
     with col_btn4:
       st.download_button(
-          "🌐 ទាញយកជា HTML",
+          "🌐 ទាញយក HTML",
           data=html_code.encode("utf-8"),
           file_name=f"ឧបសម្ពន្ធ៣_{inv_school}_{inv_date}_{cur_voucher_no}.html",
           mime="text/html",
@@ -5512,8 +5683,10 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
     st.divider()
     st.markdown("##### 📦 ជ្រើសរើសមុខទំនិញ និងគណនាតម្លៃស្វ័យប្រវត្ត")
 
-    # ទាញយកទំនិញព្រមទាំងកាលបរិច្ឆេទវគ្គតាមសាលា ឬឃុំ
-    prod_info_map = get_products_map(school_name=chosen_school, commune=chosen_commune)
+    # ទាញយកទំនិញព្រមទាំងកាលបរិច្ឆេទវគ្គតាមសាលា ឃុំ ឬអ្នកផ្គត់ផ្គង់
+    sch_sup_tab2 = get_supplier_for_school(chosen_school) if chosen_school else None
+    sup_name_tab2 = sch_sup_tab2.get("supplier_name") if sch_sup_tab2 else None
+    prod_info_map = get_products_map(school_name=chosen_school, commune=chosen_commune, supplier_name=sup_name_tab2)
 
     item_options = (
         list(prod_info_map.keys()) + ["➕ វាយបញ្ចូលមុខទំនិញថ្មី..."]
