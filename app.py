@@ -1828,7 +1828,7 @@ def generate_annex3_html(district, commune, school_name, voucher_no, invoice_dat
 </div>
 
 <div class="doc-title-row">
-  <div class="muol doc-title">ប័ណ្ណទទួលស្បៀង</div>
+  <div class="muol doc-title">បង្កាន់ដៃទទួលស្បៀង</div>
 </div>
 
 <div class="date-row">
@@ -1838,7 +1838,7 @@ def generate_annex3_html(district, commune, school_name, voucher_no, invoice_dat
 <table class="items-table">
   <thead>
     <tr>
-      <th style="width: 6.5%;">ល.រ</th>
+      <th style="width: 6.5%;">លរ</th>
       <th style="width: 41%;">បរិយាយមុខទំនិញ</th>
       <th style="width: 15%;">បរិមាណ</th>
       <th style="width: 17.5%;">តម្លៃឯកតា</th>
@@ -1848,7 +1848,7 @@ def generate_annex3_html(district, commune, school_name, voucher_no, invoice_dat
   <tbody>
     {rows_html}
     <tr class="total-row">
-      <td colspan="2" style="text-align: center; font-weight: 700;">តម្លៃសរុប</td>
+      <td colspan="2" style="text-align: center; font-weight: 700;">តម្លៃសរុប </td>
       <td style="text-align: center; color: #0c4a8a;">{tot_qty_str}</td>
       <td></td>
       <td style="text-align: right; padding-right: 12px; color: #0c4a8a;">{tot_amount_str}</td>
@@ -1949,14 +1949,336 @@ def generate_annex3_pdf(district, commune, school_name, voucher_no, invoice_date
   return generate_simple_pdf(f"Food Receipt - {school_name} ({voucher_no})", f"Date: {invoice_date}", df_items if isinstance(df_items, pd.DataFrame) else pd.DataFrame(df_items))
 
 
-def generate_annex3_excel(district, commune, school_name, voucher_no, invoice_date, df_items, supplier_name="សាត ក្រូត", comment="", consumption_date=None):
-  """បង្កើតឯកសារ Excel ផ្លូវការ ឧបសម្ពន្ធ ៣ (ប័ណ្ណទទួលស្បៀង) ទំហំក្រដាស A5"""
-  import openpyxl
+def write_invoice_block_to_ws(
+    ws,
+    start_row: int,
+    district: str,
+    commune: str,
+    school_name: str,
+    voucher_no: str,
+    invoice_date,
+    items_list: list,
+    supplier_name: str = "សាត ក្រូត",
+    comment: str = "",
+    supplier_sig=None,
+    director_sig=None,
+    receiver_sig=None,
+    consumption_date=None,
+    copy_label: str = "ច្បាប់ដើមសម្រាប់សាលា"
+):
+  """
+  សរសេរប្លុកវិក្កយបត្រ (បង្កាន់ដៃទទួលស្បៀង - ឧបសម្ពន្ធ ៣) ចំនួន ២៧ ជួរដេក 
+  តាមទម្រង់សន្លឹក «Invoice 1» នៃឯកសារ «បញ្ជីមុខម្ហូបដែលត្រូវបញ្ជាទិញ_2026.xlsm» បេះបិទ ១០០%
+  """
   from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+  import openpyxl.drawing.image
+  import base64
+  import io
+
+  # Fonts
+  font_muol = Font(name="Khmer OS Muol Light", size=10, bold=True)
+  font_muol_title = Font(name="Khmer OS Muol", size=10, bold=True)
+  font_siemreap_bold = Font(name="Khmer OS Siemreap", size=9, bold=True)
+  font_siemreap = Font(name="Khmer OS Siemreap", size=9)
+  font_hand = Font(name="AKbalthom KhmerHand", size=9)
+  font_battambang = Font(name="Khmer OS Battambang", size=9)
+  font_note = Font(name="Khmer OS Siemreap", size=8)
+  font_note_bold = Font(name="Khmer OS Siemreap", size=8, bold=True)
+  font_copy = Font(name="Khmer OS Siemreap", size=8, italic=True)
+
+  # Borders
+  thin = Side(border_style="thin", color="000000")
+  border_all = Border(top=thin, bottom=thin, left=thin, right=thin)
+
+  # Alignments
+  align_center = Alignment(horizontal="center", vertical="center")
+  align_left = Alignment(horizontal="left", vertical="center")
+  align_right = Alignment(horizontal="right", vertical="center")
+
+  r = start_row
+
+  # R1: C:G merged "ព្រះរាជាណាចក្រកម្ពុជា", H "ឧបសម្ពន្ធ ៣"
+  ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=7)
+  ws.cell(row=r, column=3, value="ព្រះរាជាណាចក្រកម្ពុជា").font = font_muol
+  ws.cell(row=r, column=3).alignment = align_center
+  ws.cell(row=r, column=8, value="ឧបសម្ពន្ធ ៣").font = font_siemreap
+  ws.cell(row=r, column=8).alignment = align_right
+  ws.row_dimensions[r].height = 22.0
+
+  # R2: C:G merged "ជាតិ សាសនា​ ព្រះមហាក្សត្រ"
+  r += 1
+  ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=7)
+  ws.cell(row=r, column=3, value="ជាតិ សាសនា ព្រះមហាក្សត្រ").font = font_muol
+  ws.cell(row=r, column=3).alignment = align_center
+  ws.row_dimensions[r].height = 17.5
+
+  # R3: A "ក្រុង/ស្រុក", C:D merged district
+  r += 1
+  ws.cell(row=r, column=1, value="ក្រុង/ស្រុក").font = font_siemreap_bold
+  ws.cell(row=r, column=1).alignment = align_left
+  ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+  ws.cell(row=r, column=3, value=district or "").font = font_hand
+  ws.cell(row=r, column=3).alignment = align_left
+  ws.row_dimensions[r].height = 17.5
+
+  # R4: A "ឃុំ/សង្កាត់", C:D merged commune, G "លេខសក្ខីប័ត្រ ៖", H voucher_no
+  r += 1
+  ws.cell(row=r, column=1, value="ឃុំ/សង្កាត់").font = font_siemreap_bold
+  ws.cell(row=r, column=1).alignment = align_left
+  ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+  ws.cell(row=r, column=3, value=commune or "").font = font_hand
+  ws.cell(row=r, column=3).alignment = align_left
+
+  ws.cell(row=r, column=7, value="លេខសក្ខីប័ត្រ ៖").font = font_siemreap
+  ws.cell(row=r, column=7).alignment = align_right
+  ws.cell(row=r, column=8, value=str(voucher_no or "")).font = font_siemreap_bold
+  ws.cell(row=r, column=8).alignment = align_center
+  ws.row_dimensions[r].height = 17.5
+
+  # R5: A "សាលាបឋមសិក្សា", C:D merged school_name
+  r += 1
+  ws.cell(row=r, column=1, value="សាលាបឋមសិក្សា").font = font_siemreap_bold
+  ws.cell(row=r, column=1).alignment = align_left
+  ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+  ws.cell(row=r, column=3, value=school_name or "").font = font_hand
+  ws.cell(row=r, column=3).alignment = align_left
+  ws.row_dimensions[r].height = 17.5
+
+  # R6: A:H merged "បង្កាន់ដៃទទួលស្បៀង"
+  r += 1
+  ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+  ws.cell(row=r, column=1, value="បង្កាន់ដៃទទួលស្បៀង").font = font_muol_title
+  ws.cell(row=r, column=1).alignment = align_center
+  ws.row_dimensions[r].height = 19.5
+
+  # R7: A:H merged Date
+  r += 1
+  ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+  date_label = f"ថ្ងៃដាក់៖ {format_khmer_date(invoice_date)}"
+  if consumption_date:
+    date_label += f" | ថ្ងៃស៊ី/ញ៉ាំ៖ {format_khmer_date(consumption_date)}"
+  ws.cell(row=r, column=1, value=date_label).font = font_hand
+  ws.cell(row=r, column=1).alignment = align_right
+  ws.row_dimensions[r].height = 16.0
+
+  # R8: Table Header (A=លរ, B:E merged=បរិយាយមុខទំនិញ, F=បរិមាណ, G=តម្លៃឯកតា, H=តម្លៃសរុប)
+  r += 1
+  ws.cell(row=r, column=1, value="លរ").font = font_siemreap_bold
+  ws.cell(row=r, column=1).alignment = align_center
+  ws.cell(row=r, column=1).border = border_all
+
+  ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=5)
+  for c in range(2, 6):
+    ws.cell(row=r, column=c).border = border_all
+  ws.cell(row=r, column=2, value="បរិយាយមុខទំនិញ").font = font_siemreap_bold
+  ws.cell(row=r, column=2).alignment = align_center
+
+  ws.cell(row=r, column=6, value="បរិមាណ").font = font_siemreap_bold
+  ws.cell(row=r, column=6).alignment = align_center
+  ws.cell(row=r, column=6).border = border_all
+
+  ws.cell(row=r, column=7, value="តម្លៃឯកតា").font = font_siemreap_bold
+  ws.cell(row=r, column=7).alignment = align_center
+  ws.cell(row=r, column=7).border = border_all
+
+  ws.cell(row=r, column=8, value="តម្លៃសរុប").font = font_siemreap_bold
+  ws.cell(row=r, column=8).alignment = align_center
+  ws.cell(row=r, column=8).border = border_all
+  ws.row_dimensions[r].height = 21.0
+
+  # R9 to R18: 10 Item Rows
+  tot_qty = 0.0
+  tot_amt = 0.0
+  for item_idx in range(10):
+    r += 1
+    row_num = item_idx + 1
+    ws.row_dimensions[r].height = 20.5
+
+    ws.cell(row=r, column=1, value=row_num).font = font_siemreap
+    ws.cell(row=r, column=1).alignment = align_center
+    ws.cell(row=r, column=1).border = border_all
+
+    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=5)
+    for c in range(2, 6):
+      ws.cell(row=r, column=c).border = border_all
+
+    ws.cell(row=r, column=6).border = border_all
+    ws.cell(row=r, column=6).alignment = align_center
+    ws.cell(row=r, column=6).font = font_battambang
+
+    ws.cell(row=r, column=7).border = border_all
+    ws.cell(row=r, column=7).alignment = align_right
+    ws.cell(row=r, column=7).font = font_siemreap
+    ws.cell(row=r, column=7).number_format = '_(#,###_)\\ \\៛'
+
+    ws.cell(row=r, column=8).border = border_all
+    ws.cell(row=r, column=8).alignment = align_right
+    ws.cell(row=r, column=8).font = font_siemreap
+    ws.cell(row=r, column=8).number_format = '_(#,###_)\\ \\៛'
+
+    if item_idx < len(items_list):
+      item = items_list[item_idx]
+      name = str(item.get("មុខទំនិញ", item.get("item_name", item.get("name", "")))).strip()
+      try:
+        qty = float(item.get("បរិមាណ", item.get("quantity", item.get("qty", 0))) or 0)
+      except Exception:
+        qty = 0.0
+      try:
+        unit_p = float(item.get("តម្លៃរាយ (៛)", item.get("unit_price", 0)) or 0)
+      except Exception:
+        unit_p = 0.0
+      try:
+        total_p = float(item.get("សរុប (៛)", item.get("total_price", qty * unit_p)) or (qty * unit_p))
+      except Exception:
+        total_p = 0.0
+
+      ws.cell(row=r, column=2, value=name).font = font_hand
+      ws.cell(row=r, column=2).alignment = align_left
+      ws.cell(row=r, column=6, value=qty if qty % 1 != 0 else int(qty))
+      ws.cell(row=r, column=7, value=unit_p)
+      ws.cell(row=r, column=8, value=total_p)
+
+      tot_qty += qty
+      tot_amt += total_p
+
+  # R19: Total Row
+  r += 1
+  ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+  for c in range(1, 6):
+    ws.cell(row=r, column=c).border = border_all
+  ws.cell(row=r, column=1, value="តម្លៃសរុប ").font = font_siemreap_bold
+  ws.cell(row=r, column=1).alignment = align_center
+
+  ws.cell(row=r, column=6, value=tot_qty if tot_qty % 1 != 0 else int(tot_qty)).font = font_siemreap_bold
+  ws.cell(row=r, column=6).alignment = align_center
+  ws.cell(row=r, column=6).border = border_all
+
+  ws.cell(row=r, column=7).border = border_all
+
+  ws.cell(row=r, column=8, value=tot_amt).font = font_siemreap_bold
+  ws.cell(row=r, column=8).alignment = align_right
+  ws.cell(row=r, column=8).border = border_all
+  ws.cell(row=r, column=8).number_format = '_(#,###_)\\ \\៛'
+  ws.row_dimensions[r].height = 21.0
+
+  # R20: Note
+  r += 1
+  ws.cell(row=r, column=1, value="សម្គាល់៖").font = font_note_bold
+  ws.cell(row=r, column=1).alignment = align_left
+  ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=8)
+  ws.cell(row=r, column=2, value="រាល់តម្លៃស្បៀងស្នើសុំទូទាត់ត្រូវស្របតាមកិច្ចសន្យាផ្គត់ផ្គង់ស្បៀង។").font = font_note
+  ws.cell(row=r, column=2).alignment = align_left
+  ws.row_dimensions[r].height = 19.5
+
+  # R21: Signatures Header
+  r += 1
+  ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+  ws.cell(row=r, column=1, value="បានឃើញ និងឯកភាព").font = font_siemreap_bold
+  ws.cell(row=r, column=1).alignment = align_center
+
+  ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+  ws.cell(row=r, column=5, value="អ្នកទទួល").font = font_siemreap_bold
+  ws.cell(row=r, column=5).alignment = align_center
+
+  ws.merge_cells(start_row=r, start_column=7, end_row=r, end_column=8)
+  ws.cell(row=r, column=7, value="អ្នកប្រគល់").font = font_siemreap_bold
+  ws.cell(row=r, column=7).alignment = align_center
+  ws.row_dimensions[r].height = 22.5
+
+  # R22: Roles
+  r += 1
+  ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+  ws.cell(row=r, column=1, value="ប្រធាន គមស (នាយក/នាយិកាសាលា)").font = font_siemreap
+  ws.cell(row=r, column=1).alignment = align_center
+
+  ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+  ws.cell(row=r, column=5, value="នាយឃ្លាំងឬបេឡាធិការ").font = font_siemreap
+  ws.cell(row=r, column=5).alignment = align_center
+
+  ws.merge_cells(start_row=r, start_column=7, end_row=r, end_column=8)
+  ws.cell(row=r, column=7, value="អ្នកផ្គត់ផ្គង់ស្បៀង").font = font_siemreap
+  ws.cell(row=r, column=7).alignment = align_center
+  ws.row_dimensions[r].height = 20.0
+
+  # R23 & R24: Signature space / Images / Dots
+  sig_r = r + 1
+  ws.row_dimensions[sig_r].height = 36.0
+  ws.merge_cells(start_row=sig_r, start_column=1, end_row=sig_r, end_column=4)
+  ws.cell(row=sig_r, column=1, value="...............................").alignment = align_center
+  ws.cell(row=sig_r, column=1).font = font_note
+
+  ws.merge_cells(start_row=sig_r, start_column=5, end_row=sig_r, end_column=6)
+  ws.cell(row=sig_r, column=5, value="...............................").alignment = align_center
+  ws.cell(row=sig_r, column=5).font = font_note
+
+  ws.merge_cells(start_row=sig_r, start_column=7, end_row=sig_r, end_column=8)
+  ws.cell(row=sig_r, column=7, value="...............................").alignment = align_center
+  ws.cell(row=sig_r, column=7).font = font_note
+
+  # Embed signatures if provided
+  if director_sig and str(director_sig).startswith("data:image"):
+    try:
+      b64_d = str(director_sig).split(",", 1)[1]
+      img_d = openpyxl.drawing.image.Image(io.BytesIO(base64.b64decode(b64_d)))
+      img_d.width = 90
+      img_d.height = 36
+      ws.add_image(img_d, f"B{sig_r}")
+    except Exception:
+      pass
+
+  if receiver_sig and str(receiver_sig).startswith("data:image"):
+    try:
+      b64_rc = str(receiver_sig).split(",", 1)[1]
+      img_rc = openpyxl.drawing.image.Image(io.BytesIO(base64.b64decode(b64_rc)))
+      img_rc.width = 90
+      img_rc.height = 36
+      ws.add_image(img_rc, f"E{sig_r}")
+    except Exception:
+      pass
+
+  if supplier_sig and str(supplier_sig).startswith("data:image"):
+    try:
+      b64_s = str(supplier_sig).split(",", 1)[1]
+      img_s = openpyxl.drawing.image.Image(io.BytesIO(base64.b64decode(b64_s)))
+      img_s.width = 90
+      img_s.height = 36
+      ws.add_image(img_s, f"G{sig_r}")
+    except Exception:
+      pass
+
+  r += 2
+
+  # R25: Supplier Name under signature
+  r += 1
+  ws.merge_cells(start_row=r, start_column=7, end_row=r, end_column=8)
+  ws.cell(row=r, column=7, value=supplier_name or "").font = font_siemreap_bold
+  ws.cell(row=r, column=7).alignment = align_center
+  ws.row_dimensions[r].height = 20.0
+
+  # R26: Spacer row
+  r += 1
+  ws.row_dimensions[r].height = 14.0
+
+  # R27: Bottom copy label
+  r += 1
+  ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+  ws.cell(row=r, column=1, value=copy_label).font = font_copy
+  ws.cell(row=r, column=1).alignment = align_center
+  ws.row_dimensions[r].height = 17.5
+
+
+def generate_annex3_excel(
+    district, commune, school_name, voucher_no, invoice_date, df_items,
+    supplier_name="សាត ក្រូត", comment="",
+    supplier_sig=None, director_sig=None, receiver_sig=None,
+    consumption_date=None, copy_label="ច្បាប់ដើមសម្រាប់សាលា"
+):
+  """បង្កើតឯកសារ Excel ផ្លូវការ ឧបសម្ពន្ធ ៣ (បង្កាន់ដៃទទួលស្បៀង) តាមគំរូសន្លឹក Invoice 1 បេះបិទ ១០០%"""
+  import openpyxl
 
   wb = openpyxl.Workbook()
   ws = wb.active
-  ws.title = "ប័ណ្ណទទួលស្បៀង"
+  ws.title = "Invoice 1"
 
   ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
   ws.page_setup.paperSize = ws.PAPERSIZE_A5
@@ -1964,86 +2286,18 @@ def generate_annex3_excel(district, commune, school_name, voucher_no, invoice_da
   ws.page_setup.fitToWidth = 1
   ws.page_setup.fitToHeight = 1
 
-  font_muol = Font(name="Khmer OS Muol Light", size=12, bold=True)
-  font_bold = Font(name="Khmer OS", size=10, bold=True)
-  font_normal = Font(name="Khmer OS", size=10)
-  font_italic_blue = Font(name="Khmer OS", size=10, italic=True, color="1E3A8A")
-  font_blue_bold = Font(name="Khmer OS", size=11, bold=True, color="1E3A8A")
-  font_red = Font(name="Khmer OS", size=10, bold=True, color="DC2626")
-
-  thin = Side(border_style="thin", color="000000")
-  box_border = Border(top=thin, left=thin, right=thin, bottom=thin)
-
-  align_center = Alignment(horizontal="center", vertical="center")
-  align_left = Alignment(horizontal="left", vertical="center")
-  align_right = Alignment(horizontal="right", vertical="center")
-
-  ws.column_dimensions['A'].width = 8
-  ws.column_dimensions['B'].width = 38
-  ws.column_dimensions['C'].width = 16
-  ws.column_dimensions['D'].width = 18
-  ws.column_dimensions['E'].width = 22
-
-  # Header
-  ws["E1"] = "ឧបសម្ពន្ធ ៣"
-  ws["E1"].font = font_bold
-  ws["E1"].alignment = align_right
-
-  ws.merge_cells("A1:D1")
-  ws["A1"] = "ព្រះរាជាណាចក្រកម្ពុជា"
-  ws["A1"].font = font_muol
-  ws["A1"].alignment = align_center
-
-  ws.merge_cells("A2:D2")
-  ws["A2"] = "ជាតិ សាសនា ព្រះមហាក្សត្រ"
-  ws["A2"].font = font_muol
-  ws["A2"].alignment = align_center
-
-  # Metadata
-  ws["A4"] = "ក្រុង/ស្រុក :"
-  ws["A4"].font = font_bold
-  ws["B4"] = district
-  ws["B4"].font = font_blue_bold
-
-  ws["D4"] = "លេខសក្ខីប័ត្រ ៖"
-  ws["D4"].font = font_bold
-  ws["D4"].alignment = align_right
-  ws["E4"] = voucher_no
-  ws["E4"].font = font_blue_bold
-  ws["E4"].alignment = align_center
-
-  ws["A5"] = "ឃុំ/សង្កាត់ :"
-  ws["A5"].font = font_bold
-  ws["B5"] = commune
-  ws["B5"].font = font_blue_bold
-
-  ws["A6"] = "សាលាបឋមសិក្សា :"
-  ws["A6"].font = font_bold
-  ws["B6"] = school_name
-  ws["B6"].font = font_blue_bold
-
-  # Title
-  ws.merge_cells("A8:E8")
-  ws["A8"] = "ប័ណ្ណទទួលស្បៀង"
-  ws["A8"].font = Font(name="Khmer OS Muol Light", size=14, bold=True)
-  ws["A8"].alignment = align_center
-
-  ws.merge_cells("B9:E9")
-  if consumption_date:
-    ws["B9"] = f"ថ្ងៃដាក់៖ {format_khmer_date(invoice_date)} | ថ្ងៃស៊ី/ញ៉ាំ៖ {format_khmer_date(consumption_date)}"
-  else:
-    ws["B9"] = format_khmer_date(invoice_date)
-  ws["B9"].font = font_italic_blue
-  ws["B9"].alignment = align_right
-
-  # Headers
-  headers = ["ល.រ", "បរិយាយមុខទំនិញ", "បរិមាណ", "តម្លៃឯកតា", "តម្លៃសរុប"]
-  for col_idx, h in enumerate(headers, start=1):
-    cell = ws.cell(row=11, column=col_idx, value=h)
-    cell.font = font_bold
-    cell.alignment = align_center
-    cell.border = box_border
-    cell.fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+  col_widths = {
+      'A': 8.18,
+      'B': 14.36,
+      'C': 3.5,
+      'D': 9.54,
+      'E': 3.5,
+      'F': 9.82,
+      'G': 11.45,
+      'H': 16.18
+  }
+  for col, w in col_widths.items():
+    ws.column_dimensions[col].width = w
 
   if isinstance(df_items, pd.DataFrame):
     items_list = df_items.to_dict('records') if not df_items.empty else []
@@ -2051,121 +2305,106 @@ def generate_annex3_excel(district, commune, school_name, voucher_no, invoice_da
     items_list = df_items
   else:
     items_list = []
-  tot_qty = 0.0
-  tot_amount = 0.0
 
-  for r_idx in range(1, 11):
-    row_num = 11 + r_idx
-    k_num = to_khmer_num(r_idx)
-    ws.cell(row=row_num, column=1, value=k_num).alignment = align_center
-    ws.cell(row=row_num, column=1).font = font_normal
-    ws.cell(row=row_num, column=1).border = box_border
+  write_invoice_block_to_ws(
+      ws=ws,
+      start_row=1,
+      district=district,
+      commune=commune,
+      school_name=school_name,
+      voucher_no=voucher_no,
+      invoice_date=invoice_date,
+      items_list=items_list,
+      supplier_name=supplier_name,
+      comment=comment,
+      supplier_sig=supplier_sig,
+      director_sig=director_sig,
+      receiver_sig=receiver_sig,
+      consumption_date=consumption_date,
+      copy_label=copy_label
+  )
 
-    if r_idx <= len(items_list):
-      item = items_list[r_idx - 1]
-      i_name = str(item.get("មុខទំនិញ", item.get("item_name", item.get("name", "")))).strip()
-      try:
-        i_qty = float(item.get("បរិមាណ", item.get("quantity", item.get("qty", 0))) or 0)
-      except Exception:
-        i_qty = 0.0
-      try:
-        i_unit = float(item.get("តម្លៃរាយ (៛)", item.get("unit_price", 0)) or 0)
-      except Exception:
-        i_unit = 0.0
-      try:
-        i_tot = float(item.get("សរុប (៛)", item.get("total_price", i_qty * i_unit)) or (i_qty * i_unit))
-      except Exception:
-        i_tot = 0.0
+  out = io.BytesIO()
+  wb.save(out)
+  return out.getvalue()
 
-      tot_qty += i_qty
-      tot_amount += i_tot
 
-      c_name = ws.cell(row=row_num, column=2, value=i_name)
-      c_name.alignment = align_left
-      c_name.font = font_blue_bold
-      c_name.border = box_border
+def generate_all_school_invoices_excel(
+    district, commune, school_name, month_prefix,
+    supplier_name="សាត ក្រូត", comment="",
+    supplier_sig=None, director_sig=None, receiver_sig=None
+):
+  """
+  បង្កើតឯកសារ Excel សៀវភៅបង្កាន់ដៃប្រចាំខែទាំងអស់ (Full Invoice 1 Workbook)
+  ដោយរៀបចំប្លុកវិក្កយបត្រនីមួយៗ (២៧ ជួរដេកក្នុងមួយប្លុក) បន្តបន្ទាប់គ្នាបញ្ឈរ 
+  ដូចសន្លឹកកិច្ចការ «Invoice 1» នៃឯកសារ «បញ្ជីមុខម្ហូបដែលត្រូវបញ្ជាទិញ_2026.xlsm» ទាំងស្រុង!
+  """
+  import openpyxl
 
-      c_qty = ws.cell(row=row_num, column=3, value=i_qty)
-      c_qty.alignment = align_center
-      c_qty.font = font_normal
-      c_qty.border = box_border
-      c_qty.number_format = "#,##0.##"
+  wb = openpyxl.Workbook()
+  ws = wb.active
+  ws.title = "Invoice 1"
 
-      c_unit = ws.cell(row=row_num, column=4, value=i_unit)
-      c_unit.alignment = align_right
-      c_unit.font = font_normal
-      c_unit.border = box_border
-      c_unit.number_format = '#,##0" ៛"'
+  ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
+  ws.sheet_properties.pageSetUpPr.fitToPage = True
+  ws.page_setup.fitToWidth = 1
 
-      c_tot = ws.cell(row=row_num, column=5, value=i_tot)
-      c_tot.alignment = align_right
-      c_tot.font = font_normal
-      c_tot.border = box_border
-      c_tot.number_format = '#,##0" ៛"'
-    else:
-      for c_i in range(2, 6):
-        cell = ws.cell(row=row_num, column=c_i, value="")
-        cell.border = box_border
+  col_widths = {
+      'A': 8.18,
+      'B': 14.36,
+      'C': 3.5,
+      'D': 9.54,
+      'E': 3.5,
+      'F': 9.82,
+      'G': 11.45,
+      'H': 16.18
+  }
+  for col, w in col_widths.items():
+    ws.column_dimensions[col].width = w
 
-  # Total Row
-  tot_row = 22
-  ws.merge_cells(f"A{tot_row}:B{tot_row}")
-  c_tot_label = ws.cell(row=tot_row, column=1, value="តម្លៃសរុប")
-  c_tot_label.font = font_bold
-  c_tot_label.alignment = align_center
-  ws.cell(row=tot_row, column=1).border = box_border
-  ws.cell(row=tot_row, column=2).border = box_border
+  # ទាញយកកាលបរិច្ឆេទទាំងអស់ក្នុងខែនោះសម្រាប់សាលានេះ
+  dates_query = """
+      SELECT DISTINCT date, voucher_no, consumption_date 
+      FROM daily_records 
+      WHERE school_name=? AND date LIKE ?
+      ORDER BY date ASC
+  """
+  date_rows = cursor.execute(dates_query, (school_name, f"{month_prefix}%")).fetchall()
 
-  c_t_qty = ws.cell(row=tot_row, column=3, value=tot_qty)
-  c_t_qty.font = font_bold
-  c_t_qty.alignment = align_center
-  c_t_qty.border = box_border
-  c_t_qty.number_format = "#,##0.##"
+  if not date_rows:
+    write_invoice_block_to_ws(
+        ws=ws, start_row=1, district=district, commune=commune,
+        school_name=school_name, voucher_no="001", invoice_date=f"{month_prefix}-01",
+        items_list=[], supplier_name=supplier_name, comment=comment
+    )
+  else:
+    for idx, (inv_d, v_no, c_d) in enumerate(date_rows):
+      start_r = 1 + idx * 27
+      items_q = """
+          SELECT item_name as [មុខទំនិញ], quantity as [បរិមាណ], unit_price as [តម្លៃរាយ (៛)], total_price as [សរុប (៛)]
+          FROM daily_records 
+          WHERE school_name=? AND date=? 
+          ORDER BY id ASC
+      """
+      df_day_items = pd.read_sql_query(items_q, conn, params=(school_name, inv_d))
+      items_list = df_day_items.to_dict('records') if not df_day_items.empty else []
 
-  ws.cell(row=tot_row, column=4, value="").border = box_border
-
-  c_t_amt = ws.cell(row=tot_row, column=5, value=tot_amount)
-  c_t_amt.font = font_bold
-  c_t_amt.alignment = align_right
-  c_t_amt.border = box_border
-  c_t_amt.number_format = '#,##0" ៛"'
-
-  # Note
-  ws.cell(row=24, column=1, value="សម្គាល់៖    រាល់តម្លៃស្បៀងស្នើសុំទូទាត់ត្រូវស្របតាមកិច្ចសន្យាផ្គត់ផ្គង់ស្បៀង។").font = Font(name="Khmer OS", size=9, bold=True)
-
-  # Signatures
-  ws.cell(row=26, column=1, value="បានឃើញ និងឯកភាព").font = font_bold
-  ws.cell(row=26, column=1).alignment = align_center
-  ws.cell(row=27, column=1, value="ប្រធាន គមស (នាយក/នាយិកាសាលា)").font = font_normal
-  ws.cell(row=27, column=1).alignment = align_center
-
-  ws.cell(row=26, column=3, value="អ្នកទទួល").font = font_bold
-  ws.cell(row=26, column=3).alignment = align_center
-  ws.cell(row=27, column=3, value="នាយឃ្លាំងឬបេឡាធិការ").font = font_normal
-  ws.cell(row=27, column=3).alignment = align_center
-
-  ws.cell(row=26, column=5, value="អ្នកប្រគល់").font = font_bold
-  ws.cell(row=26, column=5).alignment = align_center
-  ws.cell(row=27, column=5, value="អ្នកផ្គត់ផ្គង់ស្បៀង").font = font_normal
-  ws.cell(row=27, column=5).alignment = align_center
-
-  ws.cell(row=30, column=5, value=supplier_name).font = font_bold
-  ws.cell(row=30, column=5).alignment = align_center
-
-  # Comment box
-  ws.merge_cells("A32:E34")
-  c_box = ws.cell(row=32, column=1, value=f"យោបល់ចំពោះទំនិញ៖ {comment}\n\n..........................................................................................................................................................................................")
-  c_box.font = font_normal
-  c_box.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
-  for r in range(32, 35):
-    for c in range(1, 6):
-      ws.cell(row=r, column=c).border = box_border
-
-  # Footer
-  ws.merge_cells("A36:E36")
-  c_foot = ws.cell(row=36, column=1, value="ច្បាប់ដើមសម្រាប់សាលា")
-  c_foot.font = font_red
-  c_foot.alignment = align_center
+      write_invoice_block_to_ws(
+          ws=ws,
+          start_row=start_r,
+          district=district,
+          commune=commune,
+          school_name=school_name,
+          voucher_no=v_no if v_no else f"{idx+1:03d}",
+          invoice_date=inv_d,
+          items_list=items_list,
+          supplier_name=supplier_name,
+          comment=comment,
+          supplier_sig=supplier_sig,
+          director_sig=director_sig,
+          receiver_sig=receiver_sig,
+          consumption_date=c_d
+      )
 
   out = io.BytesIO()
   wb.save(out)
@@ -4855,8 +5094,8 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
 
   # ----------------- TAB 1: វិក្កយបត្រ ឧបសម្ពន្ធ ៣ ផ្លូវការ -----------------
   with rec_main_tab1:
-    st.subheader("🧾 ប័ណ្ណទទួលស្បៀង (វិក្កយបត្រផ្លូវការ ឧបសម្ពន្ធ ៣)")
-    st.info("💡 គំរូទម្រង់ផ្លូវការតាមឯកសារស្កេន ឧបសម្ពន្ធ ៣ នៃកិច្ចសន្យាផ្គត់ផ្គង់ស្បៀង | លេខសក្ខីប័ត្របង្កើតឡើងដោយស្វ័យប្រវត្ត ចាប់ផ្ដើមពី 001 តាមសាលានីមួយៗ")
+    st.subheader("🧾 បង្កាន់ដៃទទួលស្បៀង (វិក្កយបត្រផ្លូវការ ឧបសម្ពន្ធ ៣ - តាមគំរូសន្លឹក Invoice 1)")
+    st.info("💡 គំរូទម្រង់ផ្លូវការតាមសន្លឹកកិច្ចការ «Invoice 1» នៃឯកសារ Excel «បញ្ជីមុខម្ហូបដែលត្រូវបញ្ជាទិញ_2026.xlsm» បេះបិទ ១០០% | លេខសក្ខីប័ត្របង្កើតឡើងដោយស្វ័យប្រវត្ត ចាប់ផ្ដើមពី 001 តាមសាលានីមួយៗ")
 
     # ១. ជួរជ្រើសរើសទីតាំងតៗគ្នា (Cascading: District -> Commune -> School) និងកាលបរិច្ឆេទ
     col_d, col_c, col_s, col_dt = st.columns([1, 1, 1.3, 1])
@@ -5080,11 +5319,24 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
       )
 
     with col_btn3:
-      excel_bytes = generate_annex3_excel(act_district, act_commune, inv_school, cur_voucher_no, inv_date, df_inv, supplier_name, inv_comment, consumption_date=inv_eat_date)
+      excel_bytes = generate_annex3_excel(
+          district=act_district,
+          commune=act_commune,
+          school_name=inv_school,
+          voucher_no=cur_voucher_no,
+          invoice_date=inv_date,
+          df_items=df_inv,
+          supplier_name=supplier_name,
+          comment=inv_comment,
+          supplier_sig=active_sup_sig,
+          director_sig=active_dir_sig,
+          receiver_sig=active_rec_sig,
+          consumption_date=inv_eat_date
+      )
       st.download_button(
-          "📥 ទាញយកជា Excel (ឧបសម្ពន្ធ ៣)",
+          "📥 ទាញយកជា Excel (គំរូ Invoice 1)",
           data=excel_bytes,
-          file_name=f"ឧបសម្ពន្ធ៣_{inv_school}_{inv_date}_{cur_voucher_no}.xlsx",
+          file_name=f"Invoice1_{inv_school}_{inv_date}_{cur_voucher_no}.xlsx",
           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           use_container_width=True
       )
@@ -5098,8 +5350,31 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
           use_container_width=True
       )
 
-    # ៥. បង្ហាញទិដ្ឋភាពពិតនៃប័ណ្ណទទួលស្បៀង (Live Preview លើអេក្រង់)
-    st.markdown("#### 👁️ ទិដ្ឋភាពពិតនៃប័ណ្ណទទួលស្បៀង (Live Preview)")
+    # ៥. មុខងារទាញយកសៀវភៅបង្កាន់ដៃប្រចាំខែទាំងអស់ (Full Invoice 1 Workbook)
+    cur_month_str = str(inv_date)[:7]
+    with st.expander("📚 ទាញយកសៀវភៅបង្កាន់ដៃប្រចាំខែទាំងអស់ (Full Monthly Invoice 1 Workbook)", expanded=False):
+      st.info(f"💡 ទាញយកបង្កាន់ដៃទាំងអស់ក្នុងខែ `{cur_month_str}` សម្រាប់សាលា «{inv_school}» ដោយរៀបចំជាប្លុកបញ្ឈរ (២៧ ជួរដេកក្នុងមួយវិក្កយបត្រ) ដូចសន្លឹកកិច្ចការ «Invoice 1» នៃឯកសារ Excel «បញ្ជីមុខម្ហូបដែលត្រូវបញ្ជាទិញ_2026.xlsm» ទាំងស្រុង!")
+      all_invoices_excel = generate_all_school_invoices_excel(
+          district=act_district,
+          commune=act_commune,
+          school_name=inv_school,
+          month_prefix=cur_month_str,
+          supplier_name=supplier_name,
+          comment=inv_comment,
+          supplier_sig=active_sup_sig,
+          director_sig=active_dir_sig,
+          receiver_sig=active_rec_sig
+      )
+      st.download_button(
+          f"📥 ទាញយកសៀវភៅបង្កាន់ដៃខែ {cur_month_str} ទាំងអស់ (ដូច Invoice 1 ទាំងស្រុង)",
+          data=all_invoices_excel,
+          file_name=f"Invoice_1_{inv_school}_{cur_month_str}_All.xlsx",
+          mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          use_container_width=True
+      )
+
+    # ៦. បង្ហាញទិដ្ឋភាពពិតនៃប័ណ្ណទទួលស្បៀង (Live Preview លើអេក្រង់)
+    st.markdown("#### 👁️ ទិដ្ឋភាពពិតនៃប័ណ្ណទទួលស្បៀង (Live Preview - តាមគំរូ Invoice 1)")
     st.components.v1.html(html_code, height=940, scrolling=True)
 
   # ----------------- TAB 2: តារាងបញ្ជាទិញប្រចាំថ្ងៃតាមសាលា (School Daily Matrix) -----------------
