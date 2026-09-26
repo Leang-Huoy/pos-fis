@@ -3942,6 +3942,14 @@ st.sidebar.divider()
 if st.sidebar.button("🔄 ផ្ទុកទិន្នន័យឡើងវិញ (Refresh All)", use_container_width=True, key="btn_sidebar_refresh_full", help="ចុចដើម្បី Refresh ទិន្នន័យទាំងអស់"):
   st.rerun()
 
+with st.sidebar.expander("📱 ភ្ជាប់ជាមួយទូរស័ព្ទ (Mobile QR)", expanded=False):
+  st.markdown("**ស្កេនដើម្បីបើកលើទូរស័ព្ទ:**")
+  if os.path.exists("mobile_qr.png"):
+    st.image("mobile_qr.png", use_container_width=True)
+  st.caption("🌐 **Link:** `http://192.168.1.9:8501`")
+  st.caption("📶 *សូមប្រាកដថាទូរស័ព្ទភ្ជាប់ Wi-Fi តែមួយជាមួយកុំព្យូទ័រ*")
+
+
 menu = st.sidebar.radio(
     "ជ្រើសរើសផ្នែក៖",
     [
