@@ -635,14 +635,14 @@ def init_db():
   # Ensure columns in purchases
   cursor.execute("PRAGMA table_info(purchases)")
   p_cols = [c[1] for c in cursor.fetchall()]
-  for col, col_t in [('category', 'TEXT DEFAULT ""'), ('commune', 'TEXT DEFAULT ""'), ('school_name', 'TEXT DEFAULT ""'), ('paid_amount', 'REAL DEFAULT 0'), ('payment_date', 'TEXT DEFAULT ""')]:
+  for col, col_t in [('category', 'TEXT DEFAULT ""'), ('commune', 'TEXT DEFAULT ""'), ('school_name', 'TEXT DEFAULT ""'), ('paid_amount', 'REAL DEFAULT 0'), ('payment_date', 'TEXT DEFAULT ""'), ('operator_name', 'TEXT DEFAULT ""')]:
     if col not in p_cols:
       cursor.execute(f"ALTER TABLE purchases ADD COLUMN {col} {col_t}")
 
   # Ensure columns in transactions
   cursor.execute("PRAGMA table_info(transactions)")
   tr_cols = [c[1] for c in cursor.fetchall()]
-  for col, col_t in [('commune', 'TEXT DEFAULT ""'), ('school_name', 'TEXT DEFAULT ""')]:
+  for col, col_t in [('commune', 'TEXT DEFAULT ""'), ('school_name', 'TEXT DEFAULT ""'), ('operator_name', 'TEXT DEFAULT ""')]:
     if col not in tr_cols:
       cursor.execute(f"ALTER TABLE transactions ADD COLUMN {col} {col_t}")
 
@@ -8417,6 +8417,7 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
         cat_options = ["បន្លែ", "ត្រីសាច់ស៊ុត", "អង្ករ", "ប្រេងឆា", "អំបិល", "គ្រឿងទេស", "ផ្សេងៗ"]
         b_cat = st.selectbox("ប្រភេទមុខទំនិញ *", cat_options, help="ជ្រើសរើសប្រភេទមុខទំនិញជាក់ស្ដែង សម្រាប់បញ្ចូលរបាយការណ៍ចំណាយ")
         b_supplier = st.text_input("ឈ្មោះអ្នកផ្គត់ផ្គង់ *", placeholder="ឧ. សាត ក្រូត, គង់ វ៉ាន់នី...")
+        b_operator = st.text_input("ឈ្មោះអ្នកធ្វើប្រតិបត្តិការ *", value=user_info.get("name", ""), placeholder="វាយឈ្មោះអ្នកកត់ត្រា/អ្នកទទួលបន្ទុក...", help="ឈ្មោះបុគ្គលិក ឬអ្នកទទួលបន្ទុកធ្វើប្រតិបត្តិការទិញទំនិញនេះ")
 
       with c_b2:
         b_qty = st.number_input("ចំនួនបរិមាណ", min_value=0.1, value=1.0, step=0.5)
@@ -8452,8 +8453,8 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
 
           cursor.execute(
               """
-              INSERT INTO purchases (date, item_name, unit_price, quantity, total_price, supplier_name, status, note, paid_amount, payment_date, category, commune, school_name)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+              INSERT INTO purchases (date, item_name, unit_price, quantity, total_price, supplier_name, status, note, paid_amount, payment_date, category, commune, school_name, operator_name)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
               """,
               (
                   str(b_date),
@@ -8469,6 +8470,7 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
                   b_cat,
                   f_comm,
                   f_sch,
+                  b_operator.strip(),
               ),
           )
 
@@ -8477,8 +8479,8 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
             expense_cat_name = f"ចំណាយទិញ ({b_cat})"
             cursor.execute(
                 """
-                INSERT INTO transactions (date, type, category, amount, description, commune, school_name)
-                VALUES (?,?,?,?,?,?,?)
+                INSERT INTO transactions (date, type, category, amount, description, commune, school_name, operator_name)
+                VALUES (?,?,?,?,?,?,?,?)
                 """,
                 (
                     str(b_date),
@@ -8488,6 +8490,7 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
                     f"ទិញ {b_item.strip()} ចំនួន {b_qty} ពី {b_supplier.strip()}",
                     f_comm,
                     f_sch,
+                    b_operator.strip(),
                 ),
             )
 
@@ -8518,6 +8521,7 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
         quantity as [ចំនួន],
         total_price as [សរុប (៛)],
         supplier_name as [អ្នកផ្គត់ផ្គង់],
+        COALESCE(NULLIF(operator_name, ''), '-') as [អ្នកធ្វើប្រតិបត្តិការ],
         status as [ស្ថានភាព],
         COALESCE(NULLIF(payment_date, ''), '-') as [កាលបរិច្ឆេទបានទូទាត់រួច]
       FROM purchases
@@ -8553,6 +8557,7 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
         COALESCE(NULLIF(category, ''), 'ទូទៅ') as [ប្រភេទ],
         total_price as [បំណុលជំពាក់ (៛)],
         COALESCE(paid_amount, 0) as [បានទូទាត់ (៛)],
+        COALESCE(NULLIF(operator_name, ''), '-') as [អ្នកធ្វើប្រតិបត្តិការ],
         status as [ស្ថានភាព]
       FROM purchases
     """
@@ -8619,6 +8624,7 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
           with p_col2:
             pay_date = st.date_input("កាលបរិច្ឆេទដែលបានទូទាត់រួច", date.today(), key=f"pay_date_{d_id}")
             pay_amount = st.number_input("ទឹកប្រាក់ដែលត្រូវទូទាត់ (៛)", min_value=100, max_value=int(d_tot * 2), value=int(d_tot), step=500, format="%d", key=f"pay_amt_{d_id}")
+            pay_operator = st.text_input("ឈ្មោះអ្នកធ្វើប្រតិបត្តិការ *", value=user_info.get("name", ""), placeholder="វាយឈ្មោះអ្នកទូទាត់/អ្នកទទួលបន្ទុក...", key=f"pay_op_{d_id}", help="ឈ្មោះបុគ្គលិក ឬអ្នកទទួលបន្ទុកធ្វើប្រតិបត្តិការទូទាត់ប្រាក់ជំពាក់នេះ")
 
           btn_confirm_pay = st.button("✅ សម្គាល់ថាបានទូទាត់រួច & បញ្ចូលក្នុងចំណាយប្រចាំថ្ងៃ", type="primary", use_container_width=True, key=f"btn_pay_{d_id}")
           if btn_confirm_pay:
@@ -8626,18 +8632,18 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
             cursor.execute(
                 """
                 UPDATE purchases 
-                SET status='ទូទាត់រួច', payment_date=?, paid_amount=?, category=?
+                SET status='ទូទាត់រួច', payment_date=?, paid_amount=?, category=?, operator_name=?
                 WHERE id=?
                 """,
-                (str(pay_date), pay_amount, actual_cat, d_id),
+                (str(pay_date), pay_amount, actual_cat, pay_operator.strip(), d_id),
             )
 
             # បញ្ចូលទៅជារបាយការណ៍ចំណាយប្រចាំថ្ងៃ ដោយដាក់ឈ្មោះថា <ទូរទាត់ប្រាក់ជំពាក់ថ្លៃ (បន្លែ ឬត្រីសាច់ស៊ុត)> តាមជាក់ស្ដែង
             debt_exp_title = f"ទូរទាត់ប្រាក់ជំពាក់ថ្លៃ ({actual_cat})"
             cursor.execute(
                 """
-                INSERT INTO transactions (date, type, category, amount, description, commune, school_name)
-                VALUES (?,?,?,?,?,?,?)
+                INSERT INTO transactions (date, type, category, amount, description, commune, school_name, operator_name)
+                VALUES (?,?,?,?,?,?,?,?)
                 """,
                 (
                     str(pay_date),
@@ -8647,10 +8653,11 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
                     f"ទូទាត់ប្រាក់ជំពាក់ថ្លៃទិញ {d_item} ({format_riel(pay_amount)}) ជូនអ្នកផ្គត់ផ្គង់ {d_sup}",
                     d_comm,
                     d_sch,
+                    pay_operator.strip(),
                 ),
             )
             conn.commit()
-            st.success(f"🎉 បានទូទាត់បំណុលជោគជ័យ! ប្រព័ន្ធបានបញ្ចូលទៅរបាយការណ៍ចំណាយប្រចាំថ្ងៃ: **«{debt_exp_title}»** ចំនួន **{format_riel(pay_amount)}** កាលបរិច្ឆេទ {pay_date}!")
+            st.success(f"🎉 បានទូទាត់បំណុលជោគជ័យ! ប្រព័ន្ធបានបញ្ចូលទៅរបាយការណ៍ចំណាយប្រចាំថ្ងៃ: **«{debt_exp_title}»** ចំនួន **{format_riel(pay_amount)}** (អ្នកធ្វើប្រតិបត្តិការ: **{pay_operator.strip()}**)")
             st.rerun()
 
   # ----------------- TAB 3: នាំចូលពីឯកសារ -----------------
@@ -8783,8 +8790,8 @@ elif menu == "💰 ចំណូល និងចំណាយ":
     tr_p.append(filter_cat)
   if search_kw.strip():
     kw = f"%{search_kw.strip()}%"
-    tr_w.append("(description LIKE ? OR category LIKE ?)")
-    tr_p.extend([kw, kw])
+    tr_w.append("(description LIKE ? OR category LIKE ? OR operator_name LIKE ?)")
+    tr_p.extend([kw, kw, kw])
   if filter_year != "-- ទាំងអស់ --":
     tr_w.append("strftime('%Y', date) = ?")
     tr_p.append(filter_year)
@@ -8823,6 +8830,7 @@ elif menu == "💰 ចំណូល និងចំណាយ":
       t_date = st.date_input("កាលបរិច្ឆេទ", date.today())
       t_type = st.selectbox("ប្រភេទប្រតិបត្តិការ", ["ចំណូល", "ចំណាយ"])
       t_cat = st.text_input("ផ្នែក / ប្រភេទទូទៅ", placeholder="ឧ. លក់ស្បៀង, ថ្លៃដឹក, ទឹកភ្លើង, ផ្សេងៗ...")
+      t_operator = st.text_input("ឈ្មោះអ្នកធ្វើប្រតិបត្តិការ *", value=user_info.get("name", ""), placeholder="វាយឈ្មោះអ្នកកត់ត្រា/អ្នកទទួលបន្ទុក...", help="ឈ្មោះបុគ្គលិក ឬអ្នកទទួលបន្ទុកធ្វើប្រតិបត្តិការចំណូល/ចំណាយនេះ")
       t_amt = st.number_input("ចំនួនទឹកប្រាក់ (៛) *", min_value=0, step=100, format="%d")
       t_desc = st.text_area("ពិពណ៌នាបន្ថែម", placeholder="សរសេរព័ត៌មានលម្អិត...")
 
@@ -8838,13 +8846,13 @@ elif menu == "💰 ចំណូល និងចំណាយ":
         else:
           cursor.execute(
               """
-              INSERT INTO transactions (date, type, category, amount, description, commune)
-              VALUES (?,?,?,?,?,?)
+              INSERT INTO transactions (date, type, category, amount, description, commune, operator_name)
+              VALUES (?,?,?,?,?,?,?)
               """,
-              (str(t_date), t_type, t_cat.strip() if t_cat else "ទូទៅ", t_amt, t_desc.strip(), t_comm_val),
+              (str(t_date), t_type, t_cat.strip() if t_cat else "ទូទៅ", t_amt, t_desc.strip(), t_comm_val, t_operator.strip()),
           )
           conn.commit()
-          st.success("🎉 បានកត់ត្រាប្រតិបត្តិការរួចរាល់!")
+          st.success(f"🎉 បានកត់ត្រាប្រតិបត្តិការរួចរាល់! (អ្នកធ្វើប្រតិបត្តិការ: **{t_operator.strip()}**)")
           st.rerun()
 
   with col_t2:
@@ -8855,6 +8863,7 @@ elif menu == "💰 ចំណូល និងចំណាយ":
         type as [ប្រភេទ], 
         category as [ផ្នែក/ប្រភេទទូទៅ], 
         amount as [ចំនួនទឹកប្រាក់ (៛)], 
+        COALESCE(NULLIF(operator_name, ''), '-') as [អ្នកធ្វើប្រតិបត្តិការ],
         description as [ពិពណ៌នា] 
       FROM transactions 
       {tr_w_clause}
