@@ -2,6 +2,7 @@ import hashlib
 import io
 import os
 import re
+import socket
 import sqlite3
 from datetime import date
 from docx import Document
@@ -25,6 +26,18 @@ st.set_page_config(
 # បង្កើត Database Connection
 conn = sqlite3.connect("school_pos.db", check_same_thread=False)
 cursor = conn.cursor()
+
+
+# មុខងារស្វែងរក Local IP ស្វ័យប្រវត្តសម្រាប់ Mobile Access
+def get_local_ip():
+  try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("8.8.8.8", 80))
+    ip = s.getsockname()[0]
+    s.close()
+    return ip
+  except Exception:
+    return "127.0.0.1"
 
 
 # មុខងារជំនួយសម្រាប់ទ្រង់ទ្រាយរូបិយប័ណ្ណប្រាក់រៀល (៛) (គ្មានក្បៀស .00 ដោយប្រើទម្រង់ 7,500 15,800)
@@ -3944,9 +3957,18 @@ if st.sidebar.button("🔄 ផ្ទុកទិន្នន័យឡើងវ�
 
 with st.sidebar.expander("📱 ភ្ជាប់ជាមួយទូរស័ព្ទ (Mobile QR)", expanded=False):
   st.markdown("**ស្កេនដើម្បីបើកលើទូរស័ព្ទ:**")
-  if os.path.exists("mobile_qr.png"):
-    st.image("mobile_qr.png", use_container_width=True)
-  st.caption("🌐 **Link:** `http://192.168.1.9:8501`")
+  local_ip = get_local_ip()
+  mobile_url = f"http://{local_ip}:8501"
+  try:
+    import qrcode
+    qr_img = qrcode.make(mobile_url)
+    qr_buf = io.BytesIO()
+    qr_img.save(qr_buf, format="PNG")
+    st.image(qr_buf.getvalue(), use_container_width=True)
+  except Exception:
+    if os.path.exists("mobile_qr.png"):
+      st.image("mobile_qr.png", use_container_width=True)
+  st.caption(f"🌐 **Link:** `{mobile_url}`")
   st.caption("📶 *សូមប្រាកដថាទូរស័ព្ទភ្ជាប់ Wi-Fi តែមួយជាមួយកុំព្យូទ័រ*")
 
 
