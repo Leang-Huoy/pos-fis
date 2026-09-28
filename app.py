@@ -3328,10 +3328,77 @@ def round_khmer_currency(amount):
     return base + 100
 
 
-def get_monthly_claim_items(school_name, d_start, d_end):
+def format_voucher_reference(vouchers, mode="range", fallback="001 - 016"):
+  """
+  រៀបចំទម្រង់លេខយោងបង្កាន់ដៃទទួលទំនិញ:
+  - mode == "range" (ចន្លោះលេខ): ចាប់យកលេខដំបូង និងចុងក្រោយ (ឧ. 001 - 016 ឬ 001)
+  - mode == "all" (គ្រប់លេខ): ចាប់យកគ្រប់លេខទាំងអស់តាមមុខទំនិញ (ឧ. 001, 002, 003, ...)
+  """
+  if isinstance(vouchers, str):
+    v_clean = vouchers.strip()
+    if not v_clean:
+      v_list = []
+    elif "," in v_clean:
+      v_list = [v.strip() for v in v_clean.split(",") if v.strip()]
+    elif "-" in v_clean or "–" in v_clean or "—" in v_clean:
+      m = re.match(r"^(\d+)\s*[-–—]\s*(\d+)$", v_clean)
+      if m:
+        s_n, e_n = int(m.group(1)), int(m.group(2))
+        v_list = [f"{n:03d}" for n in range(min(s_n, e_n), max(s_n, e_n) + 1)]
+      else:
+        v_list = [v_clean]
+    else:
+      v_list = [v_clean]
+  elif isinstance(vouchers, (list, set, tuple)):
+    v_list = []
+    for v in vouchers:
+      v_s = str(v or "").strip()
+      if not v_s:
+        continue
+      if "," in v_s:
+        v_list.extend([x.strip() for x in v_s.split(",") if x.strip()])
+      elif "-" in v_s or "–" in v_s or "—" in v_s:
+        m = re.match(r"^(\d+)\s*[-–—]\s*(\d+)$", v_s)
+        if m:
+          s_n, e_n = int(m.group(1)), int(m.group(2))
+          v_list.extend([f"{n:03d}" for n in range(min(s_n, e_n), max(s_n, e_n) + 1)])
+        else:
+          v_list.append(v_s)
+      else:
+        v_list.append(v_s)
+  else:
+    v_list = []
+
+  def parse_v_num(v_str):
+    digits = re.findall(r"\d+", str(v_str))
+    return int(digits[-1]) if digits else 0
+
+  def format_single_v(v_str):
+    v_c = str(v_str or "").strip()
+    if v_c.isdigit():
+      return f"{int(v_c):03d}"
+    return v_c
+
+  formatted_v = [format_single_v(x) for x in v_list if str(x).strip()]
+  unique_v = sorted(list(dict.fromkeys(formatted_v)), key=parse_v_num)
+
+  if not unique_v:
+    return fallback
+
+  if mode == "all":
+    return ", ".join(unique_v)
+  else:
+    if len(unique_v) > 1:
+      return f"{unique_v[0]} - {unique_v[-1]}"
+    else:
+      return unique_v[0]
+
+
+def get_monthly_claim_items(school_name, d_start, d_end, voucher_mode="range"):
   """
   ទាញយក និងបូកសរុបទំនិញសម្រាប់សំណើទូទាត់ប្រចាំខែ
   ព្រមទាំងចាប់យកលេខយោងបង្កាន់ដៃទទួលទំនិញ ចាប់ផ្ដើមក្នុងខែ និងចុងខែ (គំរូ 001 - 016)
+  ឬគ្រប់លេខសក្ខីប័ត្រទាំងអស់តាមមុខទំនិញ (គំរូ 001, 002, 003, ...)
   """
   if not school_name:
     return []
@@ -3350,16 +3417,26 @@ def get_monthly_claim_items(school_name, d_start, d_end):
     return []
 
   def parse_v_num(v_str):
-    digits = re.findall(r'\d+', str(v_str))
+    digits = re.findall(r"\d+", str(v_str))
     return int(digits[-1]) if digits else 0
+
+  def format_single_v(v_str):
+    v_c = str(v_str or "").strip()
+    if v_c.isdigit():
+      return f"{int(v_c):03d}"
+    return v_c
 
   all_vouchers = []
   for r in rows:
     v = str(r[4] or "").strip()
     if v:
-      all_vouchers.append(v)
-  sorted_all_v = sorted(list(set(all_vouchers)), key=parse_v_num)
-  month_fallback_ref = f"{sorted_all_v[0]} - {sorted_all_v[-1]}" if len(sorted_all_v) > 1 else (sorted_all_v[0] if sorted_all_v else "001 - 016")
+      all_vouchers.append(format_single_v(v))
+  sorted_all_v = sorted(list(dict.fromkeys(all_vouchers)), key=parse_v_num)
+  month_fallback_ref = format_voucher_reference(
+      sorted_all_v,
+      mode=voucher_mode,
+      fallback="001 - 016" if voucher_mode == "range" else "001, 002, 003"
+  )
 
   from collections import OrderedDict
   items_dict = OrderedDict()
@@ -3387,18 +3464,12 @@ def get_monthly_claim_items(school_name, d_start, d_end):
     if u_price > 0:
       items_dict[i_name]["unit_prices"].append(u_price)
     if v_no:
-      items_dict[i_name]["vouchers"].append(v_no)
+      items_dict[i_name]["vouchers"].append(format_single_v(v_no))
 
   result = []
   for i_name, data in items_dict.items():
-    # ចាប់យកលេខយោងបង្កាន់ដៃទទួលទំនិញ ចាប់ផ្ដើម និងចុងបញ្ចប់ ក្នុងខែ
-    v_set = sorted(list(set(data["vouchers"])), key=parse_v_num)
-    if len(v_set) > 1:
-      v_ref = f"{v_set[0]} - {v_set[-1]}"
-    elif len(v_set) == 1:
-      v_ref = v_set[0]
-    else:
-      v_ref = month_fallback_ref
+    v_set = sorted(list(dict.fromkeys(data["vouchers"])), key=parse_v_num)
+    v_ref = format_voucher_reference(v_set, mode=voucher_mode, fallback=month_fallback_ref)
 
     u_list = data["unit_prices"]
     if u_list:
@@ -3414,12 +3485,14 @@ def get_monthly_claim_items(school_name, d_start, d_end):
         "name": i_name,
         "category": c_val,
         "voucher_ref": v_ref,
+        "vouchers": v_set,
         "qty": round(data["qty"], 2),
         "unit_price": final_u_price,
         "total_price": round(data["total_price"], 2)
     })
 
   return result
+
 
 
 def generate_monthly_claim_html(district, commune, school_name, voucher_no, d_start, d_end, items,
@@ -3685,7 +3758,11 @@ def generate_monthly_claim_html(district, commune, school_name, voucher_no, d_st
     text-align: center;
     color: #0c4a8a;
     font-weight: 600;
-    font-size: 11px;
+    font-size: 10.5px;
+    line-height: 1.25;
+    word-break: break-word;
+    white-space: normal;
+    padding: 2px 3px;
   }}
   
   .col-qty {{
@@ -4112,8 +4189,10 @@ def generate_monthly_claim_excel(district, commune, school_name, voucher_no, d_s
     c_b.font = Font(name=font_family, size=10, color="0C4A8A")
 
     c_c = ws.cell(row=r, column=3, value=v_ref)
-    c_c.alignment = Alignment(horizontal="center", vertical="center")
-    c_c.font = Font(name=font_family, size=10, color="0C4A8A", bold=True)
+    c_c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    c_c.font = Font(name=font_family, size=9 if len(str(v_ref or "")) > 15 else 10, color="0C4A8A", bold=True)
+    if len(str(v_ref or "")) > 25:
+      ws.row_dimensions[r].height = max(ws.row_dimensions[r].height or 20, 26)
 
     c_d = ws.cell(row=r, column=4, value=qty)
     c_d.alignment = Alignment(horizontal="center", vertical="center")
@@ -8447,20 +8526,97 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
           default_recolor="blue"
       )
 
-  # ៤. ទាញយក និងគ្រប់គ្រងទិន្នន័យមុខទំនិញ
-  base_items_key = f"claim_base_raw_{claim_school}_{claim_start_date}_{claim_end_date}"
-  session_key = f"claim_items_data_{claim_school}_{claim_start_date}_{claim_end_date}_{chosen_sup_sel}"
+  # ៤. ជម្រើសទម្រង់លេខយោងក្នុងបង្កាន់ដៃទទួលទំនិញ (គ្រប់លេខ / ចន្លោះលេខ)
+  st.markdown("##### 🔢 ទម្រង់លេខយោងក្នុងបង្កាន់ដៃទទួលទំនិញ (Voucher Reference Format):")
+
+  if "claim_vref_mode" not in st.session_state:
+    st.session_state["claim_vref_mode"] = "ចន្លោះលេខ"
+  if "chk_vref_range" not in st.session_state:
+    st.session_state["chk_vref_range"] = (st.session_state["claim_vref_mode"] == "ចន្លោះលេខ")
+  if "chk_vref_all" not in st.session_state:
+    st.session_state["chk_vref_all"] = (st.session_state["claim_vref_mode"] == "គ្រប់លេខ")
+
+  def on_vref_range_change():
+    if st.session_state.get("chk_vref_range"):
+      st.session_state["chk_vref_all"] = False
+      st.session_state["claim_vref_mode"] = "ចន្លោះលេខ"
+    else:
+      st.session_state["chk_vref_range"] = True
+      st.session_state["chk_vref_all"] = False
+      st.session_state["claim_vref_mode"] = "ចន្លោះលេខ"
+
+  def on_vref_all_change():
+    if st.session_state.get("chk_vref_all"):
+      st.session_state["chk_vref_range"] = False
+      st.session_state["claim_vref_mode"] = "គ្រប់លេខ"
+    else:
+      st.session_state["chk_vref_all"] = True
+      st.session_state["chk_vref_range"] = False
+      st.session_state["claim_vref_mode"] = "គ្រប់លេខ"
+
+  col_v_chk1, col_v_chk2, col_v_info = st.columns([1.1, 1.2, 2.5])
+  with col_v_chk1:
+    st.checkbox(
+        "ចន្លោះលេខ",
+        key="chk_vref_range",
+        on_change=on_vref_range_change,
+        help="ចាប់យកលេខសក្ខីប័ត្រដំបូង និងចុងក្រោយក្នុងខែតាមគំរូចាស់ (ឧ. 001 - 016)"
+    )
+  with col_v_chk2:
+    st.checkbox(
+        "គ្រប់លេខ",
+        key="chk_vref_all",
+        on_change=on_vref_all_change,
+        help="ចាប់យកគ្រប់លេខសក្ខីប័ត្រទាំងអស់តាមមុខទំនិញក្នុងខែ (ឧ. 001, 002, 003, ...)"
+    )
+  with col_v_info:
+    cur_v_mode = st.session_state.get("claim_vref_mode", "ចន្លោះលេខ")
+    if cur_v_mode == "គ្រប់លេខ":
+      st.caption("ℹ️ **ទម្រង់ [គ្រប់លេខ]:** បង្ហាញលេខសក្ខីប័ត្រទាំងអស់តាមមុខទំនិញក្នុងខែ (ឧ. `001, 002, 003, ...`)")
+    else:
+      st.caption("ℹ️ **ទម្រង់ [ចន្លោះលេខ]:** បង្ហាញលេខសក្ខីប័ត្រដំបូង និងចុងក្រោយក្នុងខែតាមគំរូចាស់ (ឧ. `001 - 016`)")
+
+  v_mode_val = "all" if st.session_state.get("claim_vref_mode") == "គ្រប់លេខ" else "range"
+  alt_v_mode = "range" if v_mode_val == "all" else "all"
+
+  base_items_key = f"claim_base_raw_{claim_school}_{claim_start_date}_{claim_end_date}_{v_mode_val}"
+  session_key = f"claim_items_data_{claim_school}_{claim_start_date}_{claim_end_date}_{chosen_sup_sel}_{v_mode_val}"
+  alt_session_key = f"claim_items_data_{claim_school}_{claim_start_date}_{claim_end_date}_{chosen_sup_sel}_{alt_v_mode}"
+
+  # ពិនិត្យការផ្លាស់ប្តូរ mode ដើម្បីបំប្លែងលេខយោងទំនិញភ្លាមៗ
+  if st.session_state.get("last_claim_vref_mode") != st.session_state.get("claim_vref_mode"):
+    st.session_state["last_claim_vref_mode"] = st.session_state.get("claim_vref_mode")
+    src_items = st.session_state.get(alt_session_key) or st.session_state.get(session_key)
+    if src_items:
+      converted_items = []
+      for it in src_items:
+        it_c = dict(it)
+        v_raw = it.get("vouchers") or it.get("voucher_ref", "")
+        it_c["voucher_ref"] = format_voucher_reference(v_raw, mode=v_mode_val)
+        converted_items.append(it_c)
+      st.session_state[session_key] = converted_items
 
   if "claim_imported_items_preset" in st.session_state and st.session_state["claim_imported_items_preset"]:
     raw_base = st.session_state.pop("claim_imported_items_preset")
+    for it in raw_base:
+      it["voucher_ref"] = format_voucher_reference(it.get("vouchers") or it.get("voucher_ref", ""), mode=v_mode_val)
     st.session_state[base_items_key] = raw_base
     st.session_state[session_key] = filter_and_price_monthly_items(
         raw_base, chosen_sup_sel, active_sup_obj, claim_month
     )
+  elif session_key not in st.session_state and alt_session_key in st.session_state:
+    prev_items = st.session_state[alt_session_key]
+    switched_items = []
+    for it in prev_items:
+      it_c = dict(it)
+      v_raw = it.get("vouchers") or it.get("voucher_ref", "")
+      it_c["voucher_ref"] = format_voucher_reference(v_raw, mode=v_mode_val)
+      switched_items.append(it_c)
+    st.session_state[session_key] = switched_items
   elif base_items_key in st.session_state:
     raw_base = list(st.session_state[base_items_key])
   else:
-    raw_base = get_monthly_claim_items(claim_school, claim_start_date, claim_end_date)
+    raw_base = get_monthly_claim_items(claim_school, claim_start_date, claim_end_date, voucher_mode=v_mode_val)
     st.session_state[base_items_key] = raw_base
 
   if session_key not in st.session_state:
@@ -8499,7 +8655,7 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
       auto_meat = any(k in c for c in detected_cats for k in ["សាច់", "ត្រី", "ស៊ុត"]) if detected_cats else True
       auto_veg = ("បន្លែ" in detected_cats) if detected_cats else True
       if detected_cats:
-        st.caption(f"🤖 **ប្រព័ន្ធចាប់យកស្វ័យប្រវត្តិតាមមុខទំនិញ:** {' • '.join([format_category_badge(c) for c in detected_cats])}")
+        st.caption(f"🤖 **ប្រព័ន្ធចាប់យកស្វវត្តិតាមមុខទំនិញ:** {' • '.join([format_category_badge(c) for c in detected_cats])}")
   else:
     auto_rice = ("អង្ករ" in detected_cats) if detected_cats else True
     auto_salt = ("អំបិល" in detected_cats) if detected_cats else True
@@ -8531,26 +8687,29 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
   # ប៊ូតុងជំនួយ: ផ្ទុកទិន្នន័យគំរូ ១៨ មុខ (ដូចឯកសារស្កេន) ឬ ទាញយកពី Database ឡើងវិញ
   col_act1, col_act2 = st.columns(2)
   with col_act1:
-    if st.button("🌟 ផ្ទុកទិន្នន័យគំរូ (១៨ មុខទំនិញដូចឯកសារស្កេន 001 - 016)", key="btn_load_sample_claim", use_container_width=True):
+    btn_sample_title = "🌟 ផ្ទុកទិន្នន័យគំរូ (១៨ មុខទំនិញ - គ្រប់លេខ)" if v_mode_val == "all" else "🌟 ផ្ទុកទិន្នន័យគំរូ (១៨ មុខទំនិញ - ចន្លោះលេខ 001 - 016)"
+    if st.button(btn_sample_title, key="btn_load_sample_claim", use_container_width=True):
+      sample_vref = "001, 002, 003, 004, 005, 006, 007, 008, 009, 010, 011, 012, 013, 014, 015, 016" if v_mode_val == "all" else "001 - 016"
+      sample_vouchers = [f"{n:03d}" for n in range(1, 17)]
       sample_18 = [
-          {"name": "ប្រេងឆា", "category": "ប្រេងឆា", "voucher_ref": "001 - 016", "qty": 23.7, "unit_price": 6499.0, "total_price": 154026.0},
-          {"name": "អំបិលអ៊ីយ៉ូត", "category": "អំបិល", "voucher_ref": "001 - 016", "qty": 5.0, "unit_price": 1000.0, "total_price": 5000.0},
-          {"name": "សាច់ជ្រូក៣ជាន់", "category": "ត្រី សាច់ ស៊ុត", "voucher_ref": "001 - 016", "qty": 19.0, "unit_price": 15950.0, "total_price": 303050.0},
-          {"name": "ស៊ុតទា", "category": "ត្រី សាច់ ស៊ុត", "voucher_ref": "001 - 016", "qty": 305.0, "unit_price": 580.0, "total_price": 176900.0},
-          {"name": "ត្រីរស់", "category": "ត្រី សាច់ ស៊ុត", "voucher_ref": "001 - 016", "qty": 57.2, "unit_price": 10000.0, "total_price": 572000.0},
-          {"name": "ត្រីអណ្តែង", "category": "ត្រី សាច់ ស៊ុត", "voucher_ref": "001 - 016", "qty": 20.8, "unit_price": 7990.0, "total_price": 166192.0},
-          {"name": "ត្រកួន", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 44.4, "unit_price": 2495.0, "total_price": 110778.0},
-          {"name": "ស្លឹកបាស", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 8.8, "unit_price": 3999.0, "total_price": 35191.0},
-          {"name": "ស្លឹកម្រុំ", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 8.8, "unit_price": 2440.0, "total_price": 21472.0},
-          {"name": "ស្ពៃក្រញាញ់", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 44.4, "unit_price": 3999.0, "total_price": 177556.0},
-          {"name": "ស្ពៃចង្កឹះ", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 22.0, "unit_price": 3950.0, "total_price": 86900.0},
-          {"name": "ផ្លែល្ពៅ", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 8.8, "unit_price": 2790.0, "total_price": 24552.0},
-          {"name": "ផ្លែត្រឡាច", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 16.8, "unit_price": 2450.0, "total_price": 41160.0},
-          {"name": "ប៉េងប៉ោះ", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 16.8, "unit_price": 3495.0, "total_price": 58716.0},
-          {"name": "ល្ហុងខ្ចី", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 8.8, "unit_price": 1495.0, "total_price": 13156.0},
-          {"name": "សណ្តែកកួរ", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 30.8, "unit_price": 3999.0, "total_price": 123169.0},
-          {"name": "ការ៉ុត", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 11.5, "unit_price": 2999.0, "total_price": 34489.0},
-          {"name": "ផ្កាខាត់ណា", "category": "បន្លែ", "voucher_ref": "001 - 016", "qty": 55.5, "unit_price": 4890.0, "total_price": 271395.0},
+          {"name": "ប្រេងឆា", "category": "ប្រេងឆា", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 23.7, "unit_price": 6499.0, "total_price": 154026.0},
+          {"name": "អំបិលអ៊ីយ៉ូត", "category": "អំបិល", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 5.0, "unit_price": 1000.0, "total_price": 5000.0},
+          {"name": "សាច់ជ្រូក៣ជាន់", "category": "ត្រី សាច់ ស៊ុត", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 19.0, "unit_price": 15950.0, "total_price": 303050.0},
+          {"name": "ស៊ុតទា", "category": "ត្រី សាច់ ស៊ុត", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 305.0, "unit_price": 580.0, "total_price": 176900.0},
+          {"name": "ត្រីរស់", "category": "ត្រី សាច់ ស៊ុត", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 57.2, "unit_price": 10000.0, "total_price": 572000.0},
+          {"name": "ត្រីអណ្តែង", "category": "ត្រី សាច់ ស៊ុត", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 20.8, "unit_price": 7990.0, "total_price": 166192.0},
+          {"name": "ត្រកួន", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 44.4, "unit_price": 2495.0, "total_price": 110778.0},
+          {"name": "ស្លឹកបាស", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 8.8, "unit_price": 3999.0, "total_price": 35191.0},
+          {"name": "ស្លឹកម្រុំ", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 8.8, "unit_price": 2440.0, "total_price": 21472.0},
+          {"name": "ស្ពៃក្រញាញ់", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 44.4, "unit_price": 3999.0, "total_price": 177556.0},
+          {"name": "ស្ពៃចង្កឹះ", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 22.0, "unit_price": 3950.0, "total_price": 86900.0},
+          {"name": "ផ្លែល្ពៅ", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 8.8, "unit_price": 2790.0, "total_price": 24552.0},
+          {"name": "ផ្លែត្រឡាច", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 16.8, "unit_price": 2450.0, "total_price": 41160.0},
+          {"name": "ប៉េងប៉ោះ", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 16.8, "unit_price": 3495.0, "total_price": 58716.0},
+          {"name": "ល្ហុងខ្ចី", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 8.8, "unit_price": 1495.0, "total_price": 13156.0},
+          {"name": "សណ្តែកកួរ", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 30.8, "unit_price": 3999.0, "total_price": 123169.0},
+          {"name": "ការ៉ុត", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 11.5, "unit_price": 2999.0, "total_price": 34489.0},
+          {"name": "ផ្កាខាត់ណា", "category": "បន្លែ", "voucher_ref": sample_vref, "vouchers": sample_vouchers, "qty": 55.5, "unit_price": 4890.0, "total_price": 271395.0},
       ]
       st.session_state[base_items_key] = sample_18
       st.session_state[session_key] = filter_and_price_monthly_items(
@@ -8560,7 +8719,7 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
 
   with col_act2:
     if st.button("🔄 ទាញយកទិន្នន័យពី Database ឡើងវិញ (Refresh from DB)", key="btn_refresh_claim", use_container_width=True):
-      raw_db = get_monthly_claim_items(claim_school, claim_start_date, claim_end_date)
+      raw_db = get_monthly_claim_items(claim_school, claim_start_date, claim_end_date, voucher_mode=v_mode_val)
       st.session_state[base_items_key] = raw_db
       st.session_state[session_key] = filter_and_price_monthly_items(
           raw_db, chosen_sup_sel, active_sup_obj, claim_month
