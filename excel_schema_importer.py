@@ -783,7 +783,7 @@ def import_records_to_database(df_records, db_path="school_pos.db", target_table
         conn.close()
 
 
-def render_school_daily_matrix_tab(conn, cursor, get_districts_fn, get_communes_fn, get_schools_by_commune_fn, get_all_schools_fn, get_products_map_fn, format_riel_fn, to_excel_fn, parse_date_safe_fn):
+def render_school_daily_matrix_tab(conn, cursor, get_districts_fn, get_communes_fn, get_schools_by_commune_fn, get_all_schools_fn, get_products_map_fn, format_riel_fn, to_excel_fn, parse_date_safe_fn, user_scope=None):
     """
     បង្ហាញផ្ទាំង «តារាងបញ្ជាទិញប្រចាំថ្ងៃតាមសាលា» (School Daily Matrix)
     គំរូដូចក្នុងឯកសារ «បញ្ជីមុខម្ហូបដែលត្រូវបញ្ជាទិញ_2026.xlsm» (Sleng, PhomDey, Chronieng, Chomkar...)
@@ -797,17 +797,39 @@ def render_school_daily_matrix_tab(conn, cursor, get_districts_fn, get_communes_
         "ជួរដេក = ថ្ងៃដាក់/ថ្ងៃហូប/លេខវិក័យប័ត្រ | ជួរឈរ = មុខទំនិញស្បៀង | អាចកែសម្រួលផ្ទាល់លើតារាង គណនាតម្លៃសរុបប្រចាំថ្ងៃ និងសរុបប្រចាំខែស្វ័យប្រវត្តិ"
     )
 
+    is_admin = True
+    user_prov, user_dist, user_comm, user_sch, user_loc_code = None, None, None, None, None
+    if user_scope:
+        is_admin, user_prov, user_dist, user_comm, user_sch, user_loc_code = user_scope
+
     # ជួរជ្រើសរើសទីតាំង សាលា ខែ និងឆ្នាំ
     mc1, mc2, mc3, mc4 = st.columns([1.2, 1.2, 1.4, 1.2])
     with mc1:
         d_list = get_districts_fn()
-        m_dist = st.selectbox("ក្រុង/ស្រុក", ["-- ទាំងអស់ --"] + d_list, key="mat_d_sel")
+        if not is_admin and user_dist:
+            m_dist = st.selectbox("ក្រុង/ស្រុក", [user_dist], key="mat_d_sel")
+        else:
+            m_dist = st.selectbox("ក្រុង/ស្រុក", ["-- ទាំងអស់ --"] + d_list, key="mat_d_sel")
     with mc2:
-        c_list = get_communes_fn(district=m_dist if m_dist != "-- ទាំងអស់ --" else None)
-        m_comm = st.selectbox("ឃុំ/សង្កាត់", ["-- ទាំងអស់ --"] + c_list, key="mat_c_sel")
+        if not is_admin and user_comm:
+            m_comm = st.selectbox("ឃុំ/សង្កាត់", [user_comm], key="mat_c_sel")
+        else:
+            c_list = get_communes_fn(district=m_dist if m_dist != "-- ទាំងអស់ --" else None)
+            m_comm = st.selectbox("ឃុំ/សង្កាត់", ["-- ទាំងអស់ --"] + c_list, key="mat_c_sel")
     with mc3:
-        m_schools = get_schools_by_commune_fn(m_comm) if m_comm != "-- ទាំងអស់ --" else get_all_schools_fn()
-        m_school = st.selectbox("🏫 សាលាបឋមសិក្សា", m_schools if m_schools else ["ស្លែងស្ពាន"], key="mat_s_sel")
+        if not is_admin:
+            if user_sch:
+                m_schools = [user_sch]
+            elif user_comm:
+                m_schools = get_schools_by_commune_fn(user_comm)
+            else:
+                m_schools = get_all_schools_fn()
+        elif m_comm != "-- ទាំងអស់ --":
+            m_schools = get_schools_by_commune_fn(m_comm)
+        else:
+            m_schools = get_all_schools_fn()
+
+        m_school = st.selectbox("🏫 សាលាបឋមសិក្សា", m_schools if m_schools else ["គ្មានសាលា"], key="mat_s_sel")
     with mc4:
         m_c_yr, m_c_mo = st.columns(2)
         with m_c_yr:
