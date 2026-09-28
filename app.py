@@ -119,84 +119,47 @@ def get_user_scope():
   return is_admin, province, district, commune, school, loc_code
 
 
-# មុខងារធ្វើសមកាលកម្មលេខកូដ និងឈ្មោះរដ្ឋបាលតាមស្តង់ដារក្រសួងអប់រំ និងបង្កើតគណនីស្វ័យប្រវត្ត
+# មុខងារធ្វើសមកាលកម្មលេខកូដ និងឈ្មោះរដ្ឋបាលតាមស្តង់ដារក្រសួងអប់រំ និងបង្កើតគណនីស្វ័យប្រវត្តទូទាំងប្រទេសកម្ពុជា
 def sync_moeys_locations_and_users():
-  default_user_pass = hash_password("user123456789")
-  commune_codes = {
-      "ជ្រោយនាងងួន": "171201",
-      "ក្លាំងហាយ": "171202",
-      "ត្រាំសសរ": "171203",
-      "មោង": "171204",
-      "ប្រីយ៍": "171205",
-      "ស្លែងស្ពាន": "171206",
-  }
-  for c_name, c_code in commune_codes.items():
-    cursor.execute(
-        "UPDATE locations SET province_code='17', district_code='1712', commune_code=? WHERE commune=?",
-        (c_code, c_name),
-    )
-    full_name = f"រដ្ឋបាលឃុំ {c_name}"
-    row = cursor.execute("SELECT id FROM users WHERE username=?", (c_code,)).fetchone()
-    if not row:
+  try:
+    import populate_national_moeys
+    populate_national_moeys.run_migration()
+  except Exception as e:
+    # Fallback to local Srei Snam sync if dataset file is unavailable
+    default_user_pass = hash_password("user123456789")
+    commune_codes = {
+        "ជ្រោយនាងងួន": "171201",
+        "ក្លាំងហាយ": "171202",
+        "ត្រាំសសរ": "171203",
+        "មោង": "171204",
+        "ប្រីយ៍": "171205",
+        "ស្លែងស្ពាន": "171206",
+    }
+    for c_name, c_code in commune_codes.items():
       cursor.execute(
-          """
-          INSERT INTO users (username, password, full_name, role, commune, district, province, school_name, location_code)
-          VALUES (?, ?, ?, 'User', ?, 'ស្រីស្នំ', 'សៀមរាប', '', ?)
-          """,
-          (c_code, default_user_pass, full_name, c_name, c_code),
+          "UPDATE locations SET province_code='17', district_code='1712', commune_code=? WHERE commune=?",
+          (c_code, c_name),
       )
-    else:
-      cursor.execute(
-          """
-          UPDATE users SET role='User', full_name=?, commune=?, district='ស្រីស្នំ', province='សៀមរាប', location_code=?
-          WHERE username=?
-          """,
-          (full_name, c_name, c_code, c_code),
-      )
+      full_name = f"រដ្ឋបាលឃុំ {c_name}"
+      row = cursor.execute("SELECT id FROM users WHERE username=?", (c_code,)).fetchone()
+      if not row:
+        cursor.execute(
+            """
+            INSERT INTO users (username, password, full_name, role, commune, district, province, school_name, location_code)
+            VALUES (?, ?, ?, 'User', ?, 'ស្រីស្នំ', 'សៀមរាប', '', ?)
+            """,
+            (c_code, default_user_pass, full_name, c_name, c_code),
+        )
+      else:
+        cursor.execute(
+            """
+            UPDATE users SET role='User', full_name=?, commune=?, district='ស្រីស្នំ', province='សៀមរាប', location_code=?
+            WHERE username=?
+            """,
+            (full_name, c_name, c_code, c_code),
+        )
+    conn.commit()
 
-  school_codes = {
-      "អំពៅដៀប": ("17120101", "171201", "ជ្រោយនាងងួន"),
-      "គោកថ្កូវ": ("17120201", "171202", "ក្លាំងហាយ"),
-      "ក្លាំងហាយ": ("17120202", "171202", "ក្លាំងហាយ"),
-      "ល្បើក": ("17120203", "171202", "ក្លាំងហាយ"),
-      "ធ្លក": ("17120301", "171203", "ត្រាំសសរ"),
-      "រំដេង": ("17120302", "171203", "ត្រាំសសរ"),
-      "ខ្វែក": ("17120401", "171204", "មោង"),
-      "ល្វា": ("17120402", "171204", "មោង"),
-      "ក្រូចចារ": ("17120501", "171205", "ប្រីយ៍"),
-      "ភ្នំដី": ("17120601", "171206", "ស្លែងស្ពាន"),
-      "ស្លែងស្ពាន": ("17120602", "171206", "ស្លែងស្ពាន"),
-      "ច្រនៀង": ("17120603", "171206", "ស្លែងស្ពាន"),
-      "ចំការចេក": ("17120604", "171206", "ស្លែងស្ពាន"),
-      "ដង្កោរ": ("17120605", "171206", "ស្លែងស្ពាន"),
-      "សាលា": ("17120606", "171206", "ស្លែងស្ពាន"),
-      "រមៀត": ("17120607", "171206", "ស្លែងស្ពាន"),
-      "ចារ": ("17120608", "171206", "ស្លែងស្ពាន"),
-  }
-  for s_name, (s_code, c_code, c_name) in school_codes.items():
-    cursor.execute(
-        "UPDATE schools SET province_code='17', district_code='1712', commune_code=?, school_code=? WHERE name=? AND commune=?",
-        (c_code, s_code, s_name, c_name),
-    )
-    full_name = f"សាលាបឋមសិក្សា {s_name} (ឃុំ{c_name})"
-    row = cursor.execute("SELECT id FROM users WHERE username=?", (s_code,)).fetchone()
-    if not row:
-      cursor.execute(
-          """
-          INSERT INTO users (username, password, full_name, role, commune, district, province, school_name, location_code)
-          VALUES (?, ?, ?, 'User', ?, 'ស្រីស្នំ', 'សៀមរាប', ?, ?)
-          """,
-          (s_code, default_user_pass, full_name, c_name, s_name, s_code),
-      )
-    else:
-      cursor.execute(
-          """
-          UPDATE users SET role='User', full_name=?, commune=?, district='ស្រីស្នំ', province='សៀមរាប', school_name=?, location_code=?
-          WHERE username=?
-          """,
-          (full_name, c_name, s_name, s_code, s_code),
-      )
-  conn.commit()
 
 
 
@@ -1464,7 +1427,8 @@ def get_provinces():
 
 
 def get_districts(province=None):
-  if province and province not in ["-- ជ្រើសរើស --", "➕ វាយបញ្ចូលខេត្តថ្មី..."]:
+  invalid_prov = ["-- ជ្រើសរើស --", "-- ជ្រើសរើសខេត្ត --", "-- ទាំងអស់ --", "➕ វាយបញ្ចូលខេត្តថ្មី..."]
+  if province and province not in invalid_prov:
     cursor.execute(
         "SELECT DISTINCT district FROM locations WHERE province=? AND district"
         " IS NOT NULL AND TRIM(district) != '' ORDER BY district",
@@ -1479,26 +1443,29 @@ def get_districts(province=None):
 
 
 def get_communes(province=None, district=None):
-  if (
-      province
-      and district
-      and province not in ["-- ជ្រើសរើស --", "➕ វាយបញ្ចូលខេត្តថ្មី..."]
-      and district not in ["-- ជ្រើសរើស --", "➕ វាយបញ្ចូលស្រុកថ្មី..."]
-  ):
+  invalid_prov = ["-- ជ្រើសរើស --", "-- ជ្រើសរើសខេត្ត --", "-- ទាំងអស់ --", "➕ វាយបញ្ចូលខេត្តថ្មី..."]
+  invalid_dist = ["-- ជ្រើសរើស --", "-- ជ្រើសរើសស្រុក --", "-- ទាំងអស់ --", "➕ វាយបញ្ចូលស្រុកថ្មី..."]
+  has_p = province and province not in invalid_prov
+  has_d = district and district not in invalid_dist
+
+  if has_p and has_d:
     cursor.execute(
         "SELECT DISTINCT commune FROM locations WHERE province=? AND"
         " district=? AND commune IS NOT NULL AND TRIM(commune) != '' ORDER BY"
         " commune",
         (province, district),
     )
-  elif district and district not in [
-      "-- ជ្រើសរើស --",
-      "➕ វាយបញ្ចូលស្រុកថ្មី...",
-  ]:
+  elif has_d:
     cursor.execute(
         "SELECT DISTINCT commune FROM locations WHERE district=? AND commune IS"
         " NOT NULL AND TRIM(commune) != '' ORDER BY commune",
         (district,),
+    )
+  elif has_p:
+    cursor.execute(
+        "SELECT DISTINCT commune FROM locations WHERE province=? AND commune IS"
+        " NOT NULL AND TRIM(commune) != '' ORDER BY commune",
+        (province,),
     )
   else:
     cursor.execute(
@@ -1509,7 +1476,8 @@ def get_communes(province=None, district=None):
 
 
 def get_villages(commune=None):
-  if commune and commune not in ["-- ជ្រើសរើស --", "➕ វាយបញ្ចូលឃុំថ្មី..."]:
+  invalid_comm = ["-- ជ្រើសរើស --", "-- ជ្រើសរើសឃុំ --", "-- ទាំងអស់ --", "➕ វាយបញ្ចូលឃុំថ្មី..."]
+  if commune and commune not in invalid_comm:
     cursor.execute(
         "SELECT DISTINCT village FROM locations WHERE commune=? AND village IS"
         " NOT NULL AND TRIM(village) != '' ORDER BY village",
@@ -2028,6 +1996,205 @@ def generate_simple_pdf(title: str, subtitle: str, df: pd.DataFrame) -> bytes:
     pdf.ln()
 
   return bytes(pdf.output())
+
+
+# មុខងារ Export ជា Excel រចនាបថស្អាត មាន Font ខ្មែរ បន្ទាត់ និងក្បាលតារាងពណ៌ខៀវ
+def generate_styled_excel(df: pd.DataFrame, title: str = "", subtitle: str = "") -> bytes:
+  """បង្កើតឯកសារ Excel (.xlsx) ដែលមានរចនាបថស្រស់ស្អាត មាន Font ខ្មែរ បន្ទាត់តារាង និងក្បាលតារាងពណ៌ខៀវ"""
+  import openpyxl
+  from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+  from openpyxl.utils import get_column_letter
+
+  wb = openpyxl.Workbook()
+  ws = wb.active
+  ws.title = "របាយការណ៍"
+  ws.views.sheetView[0].showGridLines = True
+
+  font_title = Font(name="Khmer OS Siemreap", size=14, bold=True, color="1E3A8A")
+  font_sub = Font(name="Khmer OS Siemreap", size=10, italic=True, color="475569")
+  font_header = Font(name="Khmer OS Siemreap", size=11, bold=True, color="FFFFFF")
+  font_data = Font(name="Khmer OS Siemreap", size=10)
+  fill_header = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+  fill_alt = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+  thin = Side(border_style="thin", color="CBD5E1")
+  border_box = Border(top=thin, left=thin, right=thin, bottom=thin)
+
+  row_num = 1
+  if title:
+    ws.cell(row=row_num, column=1, value=title).font = font_title
+    row_num += 1
+  if subtitle:
+    ws.cell(row=row_num, column=1, value=subtitle).font = font_sub
+    row_num += 1
+  if title or subtitle:
+    row_num += 1
+
+  cols = ["ល.រ"] + list(df.columns)
+  for c_idx, col in enumerate(cols, 1):
+    cell = ws.cell(row=row_num, column=c_idx, value=col)
+    cell.font = font_header
+    cell.fill = fill_header
+    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell.border = border_box
+  ws.row_dimensions[row_num].height = 28
+  row_num += 1
+
+  for r_idx, (_, r_data) in enumerate(df.iterrows(), 1):
+    row_vals = [r_idx] + list(r_data)
+    for c_idx, val in enumerate(row_vals, 1):
+      cell = ws.cell(row=row_num, column=c_idx, value=val)
+      cell.font = font_data
+      cell.border = border_box
+      if c_idx == 1:
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+      elif isinstance(val, (int, float)):
+        cell.alignment = Alignment(horizontal="right", vertical="center")
+      else:
+        cell.alignment = Alignment(horizontal="left", vertical="center")
+      if r_idx % 2 == 0:
+        cell.fill = fill_alt
+    ws.row_dimensions[row_num].height = 22
+    row_num += 1
+
+  for col in ws.columns:
+    max_len = max(len(str(cell.value or "")) for cell in col)
+    col_letter = get_column_letter(col[0].column)
+    ws.column_dimensions[col_letter].width = max(max_len * 1.4 + 4, 12)
+
+  buf = io.BytesIO()
+  wb.save(buf)
+  return buf.getvalue()
+
+
+# មុខងារ Export ជា PDF ផ្លូវការរចនាបថស្អាត គាំទ្រអក្សរខ្មែរ 100%
+def generate_table_report_pdf(title: str, subtitle: str, df: pd.DataFrame, orientation: str = "landscape") -> bytes:
+  """បង្កើតឯកសារ PDF ផ្លូវការដែលមានរចនាបថស្អាត បង្ហាញអក្សរខ្មែរ 100% ត្រឹមត្រូវតាមរយៈ Headless Edge/Chrome"""
+  import subprocess
+  import tempfile
+  import os
+
+  browser_exe = find_headless_browser()
+  if not browser_exe:
+    return generate_simple_pdf(title, subtitle, df)
+
+  try:
+    cols = ["ល.រ"] + list(df.columns)
+    header_html = "".join(f"<th>{c}</th>" for c in cols)
+    rows_html = ""
+    for idx, (_, r) in enumerate(df.iterrows(), 1):
+      tds = f"<td style='text-align:center;'>{idx}</td>"
+      for val in r:
+        val_str = "" if val is None else str(val)
+        tds += f"<td>{val_str}</td>"
+      rows_html += f"<tr>{tds}</tr>"
+
+    page_css = "@page { size: A4 landscape; margin: 12mm; }" if orientation == "landscape" else "@page { size: A4 portrait; margin: 12mm; }"
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  {page_css}
+  body {{
+    font-family: 'Kantumruy Pro', 'Khmer OS Siemreap', 'Segoe UI', Tahoma, sans-serif;
+    color: #0f172a;
+    font-size: 11px;
+    margin: 0;
+    padding: 0;
+  }}
+  .header-box {{
+    text-align: center;
+    margin-bottom: 16px;
+    border-bottom: 2px solid #1e3a8a;
+    padding-bottom: 10px;
+  }}
+  .country-title {{
+    font-size: 12px;
+    font-weight: 700;
+    color: #1e3a8a;
+    margin: 0;
+    line-height: 1.4;
+  }}
+  .doc-title {{
+    font-size: 16px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-top: 8px;
+    margin-bottom: 4px;
+  }}
+  .doc-sub {{
+    font-size: 11px;
+    color: #475569;
+    margin: 0;
+  }}
+  table {{
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+  }}
+  th, td {{
+    border: 1px solid #cbd5e1;
+    padding: 6px 8px;
+    font-size: 10px;
+  }}
+  th {{
+    background-color: #1e3a8a;
+    color: #ffffff;
+    font-weight: 600;
+    text-align: center;
+  }}
+  tr:nth-child(even) {{
+    background-color: #f8fafc;
+  }}
+  .footer-note {{
+    margin-top: 15px;
+    font-size: 9px;
+    color: #64748b;
+    display: flex;
+    justify-content: space-between;
+  }}
+</style>
+</head>
+<body>
+  <div class="header-box">
+    <div class="country-title">ព្រះរាជាណាចក្រកម្ពុជា<br>ជាតិ សាសនា ព្រះមហាក្សត្រ</div>
+    <div class="doc-title">{title}</div>
+    <div class="doc-sub">{subtitle}</div>
+  </div>
+  <table>
+    <thead><tr>{header_html}</tr></thead>
+    <tbody>{rows_html}</tbody>
+  </table>
+  <div class="footer-note">
+    <span>ប្រព័ន្ធគ្រប់គ្រង POS និងសាលារៀន (School POS System)</span>
+    <span>ទាញចេញទិន្នន័យសរុប៖ {len(df)} ជួរ | កាលបរិច្ឆេទ៖ {date.today().strftime('%d/%m/%Y')}</span>
+  </div>
+</body>
+</html>"""
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+      h_path = os.path.join(tmp_dir, "report.html")
+      p_path = os.path.join(tmp_dir, "report.pdf")
+      with open(h_path, "w", encoding="utf-8") as f:
+        f.write(html)
+      cmd = [
+          browser_exe,
+          "--headless=new",
+          "--no-sandbox",
+          "--disable-gpu",
+          "--no-pdf-header-footer",
+          f"--print-to-pdf={p_path}",
+          h_path
+      ]
+      res = subprocess.run(cmd, capture_output=True, timeout=25)
+      if os.path.exists(p_path):
+        with open(p_path, "rb") as f_pdf:
+          return f_pdf.read()
+  except Exception:
+    pass
+
+  return generate_simple_pdf(title, subtitle, df)
 
 
 # ================= មុខងារបង្កើតប័ណ្ណទទួលស្បៀង (វិក្កយបត្រ ឧបសម្ពន្ធ ៣) =================
@@ -4487,20 +4654,133 @@ if menu == "📊 Dashboard":
 elif menu == "📍 គ្រប់គ្រងទីតាំង និងសាលារៀន":
   col_s1, col_s2 = st.columns([5, 1])
   with col_s1:
-    st.title("📍 គ្រប់គ្រង ភូមិ/ឃុំ/ស្រុក/ខេត្ត និងសាលារៀន")
+    st.title("📍 គ្រប់គ្រង ភូមិ/ឃុំ/ស្រុក/ខេត្ត និងសាលារៀន (MoEYS Locations & Schools)")
   with col_s2:
     st.write("")
     if st.button("🔄 Refresh", key="btn_ref_loc_sch", use_container_width=True, help="Refresh ទំព័រទីតាំង និងសាលារៀន"):
       st.rerun()
+
+  # ----------------- ផ្ទាំងសង្ខេបស្ថិតិទូទៅ (Summary Metric Cards) -----------------
+  cnt_prov = len(get_provinces())
+  cnt_dist = cursor.execute("SELECT COUNT(DISTINCT district) FROM locations WHERE district IS NOT NULL AND district != ''").fetchone()[0]
+  cnt_comm = cursor.execute("SELECT COUNT(DISTINCT commune) FROM locations WHERE commune IS NOT NULL AND commune != ''").fetchone()[0]
+  cnt_sch_all = cursor.execute("SELECT COUNT(*) FROM schools").fetchone()[0]
+
+  mc1, mc2, mc3, mc4 = st.columns(4)
+  with mc1: st.metric("🏛️ ខេត្ត/រាជធានី", f"{cnt_prov} ខេត្ត/ក្រុង")
+  with mc2: st.metric("🏢 ស្រុក/ខណ្ឌ/ក្រុង", f"{cnt_dist} ស្រុក")
+  with mc3: st.metric("🏘️ ឃុំ/សង្កាត់", f"{cnt_comm:,} ឃុំ")
+  with mc4: st.metric("🏫 សាលាបឋមសិក្សា", f"{cnt_sch_all:,} សាលា")
+  st.markdown("---")
+
   tab1, tab2 = st.tabs(["📍 គ្រប់គ្រងទីតាំងរដ្ឋបាល", "🏫 គ្រប់គ្រងសាលារៀន"])
 
   # ----------------- TAB 1: ទីតាំងរដ្ឋបាល -----------------
   with tab1:
-    sub_t1, sub_t2, sub_t3 = st.tabs([
+    sub_t0, sub_t1, sub_t2, sub_t3 = st.tabs([
+        "📋 តារាងបញ្ជីទីតាំង & ស្វែងរក & Export",
         "➕ បញ្ចូលទីតាំងថ្មី",
         "✏️ កែប្រែ / 🗑️ លុបទីតាំង",
         "📥 នាំចូលទីតាំងពីក្រៅ (Excel, Word, CSV, PDF, រូបភាព)",
     ])
+
+    with sub_t0:
+      st.markdown("##### 🔍 តម្រងស្វែងរកទីតាំងរដ្ឋបាល (Cascading Filter: ខេត្ត ➔ ស្រុក ➔ ឃុំ)")
+      f_lp, f_ld, f_lc, f_lq = st.columns([1.5, 1.5, 1.5, 2.5])
+      
+      prov_list_loc = ["-- ទាំងអស់ --"] + get_provinces()
+      with f_lp:
+        sel_loc_p = st.selectbox("១. ខេត្ត/រាជធានី", prov_list_loc, key="f_loc_p")
+      
+      dist_list_loc = ["-- ទាំងអស់ --"] + (get_districts(sel_loc_p) if sel_loc_p != "-- ទាំងអស់ --" else get_districts())
+      with f_ld:
+        sel_loc_d = st.selectbox("២. ស្រុក/ខណ្ឌ", dist_list_loc, key="f_loc_d")
+      
+      comm_list_loc = ["-- ទាំងអស់ --"] + get_communes(sel_loc_p if sel_loc_p != "-- ទាំងអស់ --" else None, sel_loc_d if sel_loc_d != "-- ទាំងអស់ --" else None)
+      with f_lc:
+        sel_loc_c = st.selectbox("៣. ឃុំ/សង្កាត់", comm_list_loc, key="f_loc_c")
+      
+      with f_lq:
+        q_loc_val = st.text_input("៤. 🔍 ស្វែងរក (ឈ្មោះភូមិ ឬលេខកូដ)", key="f_loc_q").strip().lower()
+
+      # Query filtered locations
+      q_sql_loc = """
+        SELECT province as [ខេត្ត/ក្រុង], province_code as [កូដខេត្ត],
+               district as [ស្រុក/ខណ្ឌ], district_code as [កូដស្រុក],
+               commune as [ឃុំ/សង្កាត់], commune_code as [កូដឃុំ],
+               village as [ភូមិ]
+        FROM locations WHERE 1=1
+      """
+      p_loc = []
+      if sel_loc_p != "-- ទាំងអស់ --":
+        q_sql_loc += " AND province = ?"
+        p_loc.append(sel_loc_p)
+      if sel_loc_d != "-- ទាំងអស់ --":
+        q_sql_loc += " AND district = ?"
+        p_loc.append(sel_loc_d)
+      if sel_loc_c != "-- ទាំងអស់ --":
+        q_sql_loc += " AND commune = ?"
+        p_loc.append(sel_loc_c)
+      if q_loc_val:
+        q_sql_loc += " AND (LOWER(village) LIKE ? OR LOWER(commune) LIKE ? OR LOWER(district) LIKE ? OR LOWER(province) LIKE ? OR commune_code LIKE ?)"
+        p_loc.extend([f"%{q_loc_val}%"] * 5)
+      q_sql_loc += " ORDER BY province, district, commune, village"
+      
+      df_filtered_loc = pd.read_sql_query(q_sql_loc, conn, params=p_loc)
+      total_found_loc = len(df_filtered_loc)
+
+      st.markdown("---")
+      col_cnt_l, col_btn_lx, col_btn_lp = st.columns([3, 1.5, 1.5])
+      with col_cnt_l:
+        st.markdown(f"📊 **លទ្ធផល:** រកឃើញទីតាំងចំនួន **{total_found_loc:,}** តាមការជ្រើសរើស")
+      
+      if not df_filtered_loc.empty:
+        with col_btn_lx:
+          excel_loc_bytes = generate_styled_excel(
+              df_filtered_loc,
+              title="បញ្ជីទីតាំងរដ្ឋបាលនៃព្រះរាជាណាចក្រកម្ពុជា",
+              subtitle=f"ខេត្ត: {sel_loc_p} | ស្រុក: {sel_loc_d} | ឃុំ: {sel_loc_c} | សរុប: {total_found_loc:,} ទីតាំង"
+          )
+          st.download_button(
+              "📥 ទាញចេញជា Excel (.xlsx)",
+              data=excel_loc_bytes,
+              file_name=f"បញ្ជីទីតាំង_{sel_loc_p}_{sel_loc_d}.xlsx".replace(" ", "_"),
+              mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              use_container_width=True,
+              key="btn_down_loc_excel"
+          )
+        with col_btn_lp:
+          pdf_loc_bytes = generate_table_report_pdf(
+              title="បញ្ជីទីតាំងរដ្ឋបាលនៃព្រះរាជាណាចក្រកម្ពុជា",
+              subtitle=f"ខេត្ត: {sel_loc_p} | ស្រុក: {sel_loc_d} | ឃុំ: {sel_loc_c} | សរុប: {total_found_loc:,} ទីតាំង",
+              df=df_filtered_loc.head(500)
+          )
+          st.download_button(
+              "📄 ទាញចេញជា PDF (.pdf)",
+              data=pdf_loc_bytes,
+              file_name=f"បញ្ជីទីតាំង_{sel_loc_p}_{sel_loc_d}.pdf".replace(" ", "_"),
+              mime="application/pdf",
+              use_container_width=True,
+              key="btn_down_loc_pdf"
+          )
+
+        # Pagination
+        page_size_l = 50
+        total_p_loc = max(1, (total_found_loc + page_size_l - 1) // page_size_l)
+        if total_p_loc > 1:
+          p_col1, p_col2 = st.columns([1.5, 4.5])
+          with p_col1:
+            cur_p_l = st.number_input("📄 ទំព័រទី", min_value=1, max_value=total_p_loc, value=1, key="num_p_loc_view")
+          with p_col2:
+            st.caption(f"បង្ហាញជួរទី {(cur_p_l-1)*page_size_l + 1} ដល់ {min(cur_p_l*page_size_l, total_found_loc)} នៃ {total_found_loc:,}")
+        else:
+          cur_p_l = 1
+        
+        s_idx_l = (cur_p_l - 1) * page_size_l
+        e_idx_l = s_idx_l + page_size_l
+        st.dataframe(add_row_numbers(df_filtered_loc.iloc[s_idx_l:e_idx_l]), use_container_width=True, hide_index=True)
+      else:
+        st.info("ℹ️ មិនមានទិន្នន័យទីតាំងត្រូវនឹងលក្ខខណ្ឌស្វែងរកនេះទេ។")
 
     with sub_t1:
       st.subheader("➕ បញ្ចូលទីតាំងរដ្ឋបាលថ្មី (ខេត្ត ស្រុក ឃុំ ភូមិ)")
@@ -4812,25 +5092,117 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
         else:
           st.warning("មិនអាចទាញយកទិន្នន័យតារាងពីឯកសារនេះបានទេ សូមពិនិត្យមើលទ្រង់ទ្រាយឯកសារ!")
 
-    st.divider()
-    st.subheader("📋 បញ្ជីទីតាំងរដ្ឋបាលទាំងអស់")
-    df_loc = pd.read_sql_query(
-        "SELECT province as [ខេត្ត/ក្រុង], district as [ស្រុក/ខណ្ឌ], commune as"
-        " [ឃុំ/សង្កាត់], village as [ភូមិ] FROM locations ORDER BY province,"
-        " district, commune, village",
-        conn,
-    )
-    st.dataframe(
-        add_row_numbers(df_loc), use_container_width=True, hide_index=True
-    )
+
 
   # ----------------- TAB 2: សាលារៀន -----------------
   with tab2:
-    sch_sub1, sch_sub2, sch_sub3 = st.tabs([
+    sch_sub0, sch_sub1, sch_sub2, sch_sub3 = st.tabs([
+        "📋 តារាងបញ្ជីសាលារៀន & ស្វែងរក & Export",
         "➕ បញ្ចូលសាលាថ្មី",
         "✏️ កែប្រែ / 🗑️ លុបសាលារៀន",
         "📥 នាំចូលសាលាពីក្រៅ (Excel, Word, CSV, PDF, រូបភាព)",
     ])
+
+    with sch_sub0:
+      st.markdown("##### 🔍 តម្រងស្វែងរកសាលារៀនបឋមសិក្សា (Cascading Filter: ខេត្ត ➔ ស្រុក ➔ ឃុំ)")
+      f_sp, f_sd, f_sc, f_sq = st.columns([1.5, 1.5, 1.5, 2.5])
+      
+      prov_list_sch = ["-- ទាំងអស់ --"] + get_provinces()
+      with f_sp:
+        sel_sch_p = st.selectbox("១. ខេត្ត/រាជធានី", prov_list_sch, key="f_sch_p")
+      
+      dist_list_sch = ["-- ទាំងអស់ --"] + (get_districts(sel_sch_p) if sel_sch_p != "-- ទាំងអស់ --" else get_districts())
+      with f_sd:
+        sel_sch_d = st.selectbox("២. ស្រុក/ខណ្ឌ", dist_list_sch, key="f_sch_d")
+      
+      comm_list_sch = ["-- ទាំងអស់ --"] + get_communes(sel_sch_p if sel_sch_p != "-- ទាំងអស់ --" else None, sel_sch_d if sel_sch_d != "-- ទាំងអស់ --" else None)
+      with f_sc:
+        sel_sch_c = st.selectbox("៣. ឃុំ/សង្កាត់", comm_list_sch, key="f_sch_c")
+      
+      with f_sq:
+        q_sch_val = st.text_input("៤. 🔍 ស្វែងរក (ឈ្មោះសាលា ឬលេខកូដ EMIS)", key="f_sch_q").strip().lower()
+
+      # Query filtered schools
+      q_sql_sch = """
+        SELECT school_code as [លេខកូដ EMIS], name as [ឈ្មោះសាលារៀន],
+               commune as [ឃុំ/សង្កាត់], district as [ស្រុក/ខណ្ឌ],
+               province as [ខេត្ត/ក្រុង], village as [ភូមិ]
+        FROM schools WHERE 1=1
+      """
+      p_sch = []
+      if not is_admin and user_comm:
+        q_sql_sch += " AND commune = ?"
+        p_sch.append(user_comm)
+      else:
+        if sel_sch_p != "-- ទាំងអស់ --":
+          q_sql_sch += " AND province = ?"
+          p_sch.append(sel_sch_p)
+        if sel_sch_d != "-- ទាំងអស់ --":
+          q_sql_sch += " AND district = ?"
+          p_sch.append(sel_sch_d)
+        if sel_sch_c != "-- ទាំងអស់ --":
+          q_sql_sch += " AND commune = ?"
+          p_sch.append(sel_sch_c)
+      if q_sch_val:
+        q_sql_sch += " AND (LOWER(name) LIKE ? OR school_code LIKE ? OR LOWER(village) LIKE ? OR LOWER(commune) LIKE ? OR LOWER(district) LIKE ?)"
+        p_sch.extend([f"%{q_sch_val}%"] * 5)
+      q_sql_sch += " ORDER BY province, district, commune, name"
+      
+      df_filtered_sch = pd.read_sql_query(q_sql_sch, conn, params=p_sch)
+      total_found_sch = len(df_filtered_sch)
+
+      st.markdown("---")
+      col_cnt_s, col_btn_sx, col_btn_sp = st.columns([3, 1.5, 1.5])
+      with col_cnt_s:
+        st.markdown(f"🏫 **លទ្ធផល:** រកឃើញសាលារៀនចំនួន **{total_found_sch:,}** តាមការជ្រើសរើស")
+      
+      if not df_filtered_sch.empty:
+        with col_btn_sx:
+          excel_sch_bytes = generate_styled_excel(
+              df_filtered_sch,
+              title="បញ្ជីសាលារៀនបឋមសិក្សានៃព្រះរាជាណាចក្រកម្ពុជា (MoEYS Primary Schools)",
+              subtitle=f"ខេត្ត: {sel_sch_p} | ស្រុក: {sel_sch_d} | ឃុំ: {sel_sch_c} | សរុប: {total_found_sch:,} សាលា"
+          )
+          st.download_button(
+              "📥 ទាញចេញជា Excel (.xlsx)",
+              data=excel_sch_bytes,
+              file_name=f"បញ្ជីសាលារៀន_{sel_sch_p}_{sel_sch_d}.xlsx".replace(" ", "_"),
+              mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              use_container_width=True,
+              key="btn_down_sch_excel"
+          )
+        with col_btn_sp:
+          pdf_sch_bytes = generate_table_report_pdf(
+              title="បញ្ជីសាលារៀនបឋមសិក្សានៃព្រះរាជាណាចក្រកម្ពុជា (MoEYS Primary Schools)",
+              subtitle=f"ខេត្ត: {sel_sch_p} | ស្រុក: {sel_sch_d} | ឃុំ: {sel_sch_c} | សរុប: {total_found_sch:,} សាលា",
+              df=df_filtered_sch.head(500)
+          )
+          st.download_button(
+              "📄 ទាញចេញជា PDF (.pdf)",
+              data=pdf_sch_bytes,
+              file_name=f"បញ្ជីសាលារៀន_{sel_sch_p}_{sel_sch_d}.pdf".replace(" ", "_"),
+              mime="application/pdf",
+              use_container_width=True,
+              key="btn_down_sch_pdf"
+          )
+
+        # Pagination
+        page_size_s = 50
+        total_p_sch = max(1, (total_found_sch + page_size_s - 1) // page_size_s)
+        if total_p_sch > 1:
+          p_col1_s, p_col2_s = st.columns([1.5, 4.5])
+          with p_col1_s:
+            cur_p_s = st.number_input("📄 ទំព័រទី", min_value=1, max_value=total_p_sch, value=1, key="num_p_sch_view")
+          with p_col2_s:
+            st.caption(f"បង្ហាញជួរទី {(cur_p_s-1)*page_size_s + 1} ដល់ {min(cur_p_s*page_size_s, total_found_sch)} នៃ {total_found_sch:,}")
+        else:
+          cur_p_s = 1
+        
+        s_idx_s = (cur_p_s - 1) * page_size_s
+        e_idx_s = s_idx_s + page_size_s
+        st.dataframe(add_row_numbers(df_filtered_sch.iloc[s_idx_s:e_idx_s]), use_container_width=True, hide_index=True)
+      else:
+        st.info("ℹ️ មិនមានទិន្នន័យសាលារៀនត្រូវនឹងលក្ខខណ្ឌស្វែងរកនេះទេ។")
 
     with sch_sub1:
       st.subheader("🏫 បញ្ចូលសាលារៀនថ្មី (ស្វ័យប្រវត្តិចាប់តាមឃុំ)")
@@ -8958,26 +9330,126 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
     with tab_manage:
       st.subheader("📋 បញ្ជីគណនីអ្នកប្រើប្រាស់ និងសាលារៀនក្នុងប្រព័ន្ធ")
 
-      df_display = pd.DataFrame([
-          {
-              "ID": u[0],
-              "ឈ្មោះគណនី (Username)": u[1],
-              "ឈ្មោះពេញ / អង្គភាព": u[2],
-              "លេខកូដ (Code)": u[6] or u[1],
-              "ឃុំ/សង្កាត់": u[4] or "(ទូទាំងប្រព័ន្ធ)",
-              "សាលារៀន": u[5] or "(គ្រប់សាលាក្នុងឃុំ)",
-              "តួនាទី": u[3],
-              "ស្ថានភាពសិទ្ធិ": "🛡️ Admin (ពេញលេញ)" if str(u[3]).strip().lower() == "admin" else "👤 User (តាមឃុំ/សាលា)"
-          }
-          for u in all_users
-      ])
-      st.dataframe(add_row_numbers(df_display), use_container_width=True, hide_index=True)
+      st.markdown("##### 🔍 តម្រងស្វែងរកគណនីអ្នកប្រើប្រាស់ (Cascading Filter: ខេត្ត ➔ ស្រុក ➔ ឃុំ)")
+      f_up, f_ud, f_uc, f_ur, f_uq = st.columns([1.5, 1.5, 1.5, 1.2, 2.3])
+      
+      prov_list_u = ["-- ទាំងអស់ --"] + get_provinces()
+      with f_up:
+        sel_u_p = st.selectbox("១. ខេត្ត/រាជធានី", prov_list_u, key="f_user_p")
+      
+      dist_list_u = ["-- ទាំងអស់ --"] + (get_districts(sel_u_p) if sel_u_p != "-- ទាំងអស់ --" else get_districts())
+      with f_ud:
+        sel_u_d = st.selectbox("២. ស្រុក/ខណ្ឌ", dist_list_u, key="f_user_d")
+      
+      comm_list_u = ["-- ទាំងអស់ --"] + get_communes(sel_u_p if sel_u_p != "-- ទាំងអស់ --" else None, sel_u_d if sel_u_d != "-- ទាំងអស់ --" else None)
+      with f_uc:
+        sel_u_c = st.selectbox("៣. ឃុំ/សង្កាត់", comm_list_u, key="f_user_c")
+      
+      with f_ur:
+        sel_u_r = st.selectbox("៤. តួនាទី", ["-- ទាំងអស់ --", "Admin", "User"], key="f_user_r")
+
+      with f_uq:
+        q_u_val = st.text_input("៥. 🔍 ស្វែងរក (Username, Code, ឈ្មោះ)", key="f_user_q").strip().lower()
+
+      # Query filtered users
+      q_sql_u = """
+        SELECT id, username, full_name, role, commune, district, province, school_name, location_code
+        FROM users WHERE 1=1
+      """
+      p_u = []
+      if sel_u_p != "-- ទាំងអស់ --":
+        q_sql_u += " AND (province = ? OR (province = '' AND role = 'Admin'))"
+        p_u.append(sel_u_p)
+      if sel_u_d != "-- ទាំងអស់ --":
+        q_sql_u += " AND (district = ? OR (district = '' AND role = 'Admin'))"
+        p_u.append(sel_u_d)
+      if sel_u_c != "-- ទាំងអស់ --":
+        q_sql_u += " AND (commune = ? OR (commune = '' AND role = 'Admin'))"
+        p_u.append(sel_u_c)
+      if sel_u_r != "-- ទាំងអស់ --":
+        q_sql_u += " AND role = ?"
+        p_u.append(sel_u_r)
+      if q_u_val:
+        q_sql_u += " AND (LOWER(username) LIKE ? OR LOWER(full_name) LIKE ? OR location_code LIKE ? OR LOWER(school_name) LIKE ?)"
+        p_u.extend([f"%{q_u_val}%"] * 4)
+      q_sql_u += " ORDER BY id ASC"
+
+      cursor.execute(q_sql_u, tuple(p_u))
+      filtered_users = cursor.fetchall()
+      total_found_u = len(filtered_users)
+
+      st.markdown("---")
+      col_cnt_u, col_btn_ux, col_btn_up = st.columns([3, 1.5, 1.5])
+      with col_cnt_u:
+        st.markdown(f"👥 **លទ្ធផល:** រកឃើញគណនីចំនួន **{total_found_u:,}** ក្នុងចំណោមសរុប **{total_u:,}** នាក់")
+
+      if filtered_users:
+        df_u_export = pd.DataFrame([{
+            "ឈ្មោះគណនី (Username)": u[1],
+            "ឈ្មោះពេញ / អង្គភាព": u[2],
+            "លេខកូដ (Code)": u[8] or u[1],
+            "ឃុំ/សង្កាត់": u[4] or "(ទូទាំងប្រព័ន្ធ)",
+            "ស្រុក/ខណ្ឌ": u[5] or "",
+            "ខេត្ត/ក្រុង": u[6] or "",
+            "សាលារៀន": u[7] or "(គ្រប់សាលាក្នុងឃុំ)",
+            "តួនាទី": u[3],
+            "ស្ថានភាពសិទ្ធិ": "🛡️ Admin (ពេញលេញ)" if str(u[3]).strip().lower() == "admin" else "👤 User (តាមឃុំ/សាលា)"
+        } for u in filtered_users])
+
+        with col_btn_ux:
+          excel_u_bytes = generate_styled_excel(
+              df_u_export,
+              title="បញ្ជីគណនីអ្នកប្រើប្រាស់ប្រព័ន្ធ MoEYS",
+              subtitle=f"ខេត្ត: {sel_u_p} | ស្រុក: {sel_u_d} | ឃុំ: {sel_u_c} | តួនាទី: {sel_u_r} | សរុប: {total_found_u:,} នាក់"
+          )
+          st.download_button(
+              "📥 ទាញចេញជា Excel (.xlsx)",
+              data=excel_u_bytes,
+              file_name=f"បញ្ជីគណនី_{sel_u_p}_{sel_u_d}.xlsx".replace(" ", "_"),
+              mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              use_container_width=True,
+              key="btn_down_user_excel"
+          )
+        with col_btn_up:
+          pdf_u_bytes = generate_table_report_pdf(
+              title="បញ្ជីគណនីអ្នកប្រើប្រាស់ប្រព័ន្ធ MoEYS",
+              subtitle=f"ខេត្ត: {sel_u_p} | ស្រុក: {sel_u_d} | ឃុំ: {sel_u_c} | សរុប: {total_found_u:,} នាក់",
+              df=df_u_export.head(500)
+          )
+          st.download_button(
+              "📄 ទាញចេញជា PDF (.pdf)",
+              data=pdf_u_bytes,
+              file_name=f"បញ្ជីគណនី_{sel_u_p}_{sel_u_d}.pdf".replace(" ", "_"),
+              mime="application/pdf",
+              use_container_width=True,
+              key="btn_down_user_pdf"
+          )
+
+        # Pagination
+        page_size_u = 50
+        total_p_u = max(1, (total_found_u + page_size_u - 1) // page_size_u)
+        if total_p_u > 1:
+          p_col1_u, p_col2_u = st.columns([1.5, 4.5])
+          with p_col1_u:
+            cur_p_u = st.number_input("📄 ទំព័រទី", min_value=1, max_value=total_p_u, value=1, key="num_p_user_view")
+          with p_col2_u:
+            st.caption(f"បង្ហាញជួរទី {(cur_p_u-1)*page_size_u + 1} ដល់ {min(cur_p_u*page_size_u, total_found_u)} នៃ {total_found_u:,}")
+        else:
+          cur_p_u = 1
+        
+        s_idx_u = (cur_p_u - 1) * page_size_u
+        e_idx_u = s_idx_u + page_size_u
+        st.dataframe(add_row_numbers(df_u_export.iloc[s_idx_u:e_idx_u]), use_container_width=True, hide_index=True)
+      else:
+        st.info("ℹ️ មិនមានគណនីត្រូវនឹងលក្ខខណ្ឌស្វែងរកនេះទេ។")
 
       st.markdown("---")
       st.subheader("⚙️ ជ្រើសរើសគណនីសម្រាប់ប្រតិបត្តិការ (ពិនិត្យ 👁️ / កែប្រែ ✏️ / លុប 🗑️)")
 
-      user_dict = {u[0]: u for u in all_users}
-      user_ids = [u[0] for u in all_users]
+      # Use filtered users (capped at 200) for fast selectbox responsiveness
+      selectable_users = filtered_users[:200]
+      user_dict = {u[0]: u for u in selectable_users}
+      user_ids = [u[0] for u in selectable_users]
 
       def format_user_label(uid):
         u = user_dict.get(uid)
@@ -8988,12 +9460,15 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
         loc = f" [{u[4]}]" if u[4] else ""
         return f"{tag} | @{u[1]} — {u[2]}{loc}{curr}"
 
-      selected_user_id = st.selectbox(
-          "🎯 សូមជ្រើសរើសគណនីគោលដៅ៖",
-          options=user_ids,
-          format_func=format_user_label,
-          key="sel_target_user"
-      )
+      if user_ids:
+        selected_user_id = st.selectbox(
+            "🎯 សូមជ្រើសរើសគណនីគោលដៅ (ពីបញ្ជីដែលបានតម្រងខាងលើ)៖",
+            options=user_ids,
+            format_func=format_user_label,
+            key="sel_target_user"
+        )
+      else:
+        selected_user_id = None
 
       if selected_user_id and selected_user_id in user_dict:
         target_user = user_dict[selected_user_id]
