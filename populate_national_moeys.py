@@ -88,10 +88,10 @@ def run_migration():
         c_vills = villages_by_commune.get(c_code, [])
 
         # School 1: Central Commune Primary School
-        s1_name = f"សាលាបឋមសិក្សា {c_name}"
+        s1_name = c_name
         s1_code = f"{c_code}01"
         s1_village = c_vills[0]["name_km"] if c_vills else ""
-        if (s1_name.strip(), c_name.strip()) not in existing_schools and (c_name.strip(), c_name.strip()) not in existing_schools:
+        if (s1_name.strip(), c_name.strip()) not in existing_schools:
             school_batch.append((s1_name, c_name, d_name, p_name, s1_village, s1_code, c_code, d_code, p_code))
             existing_schools.add((s1_name.strip(), c_name.strip()))
 
@@ -100,7 +100,7 @@ def run_migration():
             for v_idx, v in enumerate(c_vills[1:3]):
                 v_name = v["name_km"]
                 seq = v_idx + 2
-                s_name = f"សាលាបឋមសិក្សា {v_name}"
+                s_name = v_name
                 s_code = f"{c_code}{seq:02d}"
                 if (s_name.strip(), c_name.strip()) not in existing_schools:
                     school_batch.append((s_name, c_name, d_name, p_name, v_name, s_code, c_code, d_code, p_code))
@@ -114,6 +114,8 @@ def run_migration():
         print(f"Inserted {len(school_batch)} new primary school rows.")
 
     # 4. Populate users table
+    # Make sure admin password is huoy565754
+    cursor.execute("UPDATE users SET password=? WHERE username='admin'", (hash_password("huoy565754"),))
     cursor.execute("SELECT username FROM users")
     existing_users = set(r[0] for r in cursor.fetchall())
     print(f"Existing users in DB: {len(existing_users)}")
@@ -147,15 +149,6 @@ def run_migration():
             full_name = f"រដ្ឋបាលឃុំ {c['name_km']}"
             user_batch.append((u_name, default_user_pass, full_name, "User", c["name_km"], d_name, p_name, "", u_name))
             existing_users.add(u_name)
-
-    # 4.4 Primary School Users
-    cursor.execute("SELECT school_code, name, commune, district, province FROM schools WHERE school_code IS NOT NULL AND school_code != ''")
-    all_sch_rows = cursor.fetchall()
-    for s_code, s_name, c_name, d_name, p_name in all_sch_rows:
-        if s_code not in existing_users:
-            full_name = f"{s_name} (ឃុំ{c_name})"
-            user_batch.append((s_code, default_user_pass, full_name, "User", c_name, d_name, p_name, s_name, s_code))
-            existing_users.add(s_code)
 
     if user_batch:
         cursor.executemany("""

@@ -337,8 +337,8 @@ def init_db():
         role TEXT
     )""")
 
-  # បង្កើត Admin លំនាំដើមបើមិនទាន់មាន
-  admin_pass = hash_password("admin123")
+  # បង្កើត Admin លំនាំដើមបើមិនទាន់មាន ឬ Update លេខសម្ងាត់ថ្មី
+  admin_pass = hash_password("huoy565754")
   cursor.execute(
       """
         INSERT OR IGNORE INTO users (username, password, full_name, role) 
@@ -346,6 +346,8 @@ def init_db():
     """,
       (admin_pass,),
   )
+  cursor.execute("UPDATE users SET password=? WHERE username='admin'", (admin_pass,))
+  cursor.execute("DELETE FROM users WHERE LENGTH(username) = 8")
 
   # តារាងទីតាំងរដ្ឋបាល
   cursor.execute("""
@@ -566,7 +568,7 @@ def init_db():
     cursor.execute("""
       INSERT INTO suppliers (school_name, supplier_name, village, commune, district, province, phone, signature_data, supplied_categories)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, ("សាលាបឋមសិក្សា ស្លែងស្ពាន", "សាត ក្រូត", "ភូមិខ្មែរ", "រោង", "ស្រីស្នំ", "សៀមរាប", "090 854 133", "", "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ"))
+    """, ("ស្លែងស្ពាន", "សាត ក្រូត", "ភូមិខ្មែរ", "រោង", "ស្រីស្នំ", "សៀមរាប", "090 854 133", "", "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ"))
 
   # តារាងតម្លៃគោលកម្រិតប្រព័ន្ធ (Admin Master Benchmark Prices)
   cursor.execute("""
@@ -1523,6 +1525,64 @@ def get_schools_by_commune(commune=None):
   return [r[0] for r in cursor.fetchall()]
 
 
+def clean_school_name(name):
+  """លុបពាក្យ សាលាបឋមសិក្សា ចេញទុកត្រឹមឈ្មោះសាលា"""
+  if not name:
+    return ""
+  s = str(name).strip()
+  if s.startswith("សាលាបឋមសិក្សា"):
+    s = s.replace("សាលាបឋមសិក្សា", "", 1).strip()
+  return s
+
+
+def get_scoped_location_choices(prefix_all=False, all_label="-- ទាំងអស់ --"):
+  """បញ្ជីខេត្តតាមកម្រិតសិទ្ធិ: Admin ឃើញទាំងអស់, User ឃើញតែខេត្តខ្លួន"""
+  is_admin, user_prov, user_dist, user_comm, _, _ = get_user_scope()
+  if is_admin:
+    provs = get_provinces()
+    return ([all_label] + provs) if prefix_all else provs
+  if user_prov:
+    return [user_prov]
+  return get_provinces()
+
+
+def get_scoped_district_choices(chosen_prov=None, prefix_all=False, all_label="-- ទាំងអស់ --"):
+  """បញ្ជីស្រុកតាមកម្រិតសិទ្ធិ: ស្រុក/ឃុំឃើញតែស្រុកខ្លួន, ខេត្តឃើញស្រុកក្នុងខេត្តខ្លួន, Admin ឃើញតាមខេត្តជ្រើសរើស"""
+  is_admin, user_prov, user_dist, user_comm, _, _ = get_user_scope()
+  if not is_admin:
+    if user_dist:
+      return [user_dist]
+    p = user_prov or chosen_prov
+    dists = get_districts(p)
+    return ([all_label] + dists) if (prefix_all and len(dists) > 1) else dists
+  dists = get_districts(chosen_prov)
+  return ([all_label] + dists) if prefix_all else dists
+
+
+def get_scoped_commune_choices(chosen_prov=None, chosen_dist=None, prefix_all=False, all_label="-- ទាំងអស់ --"):
+  """បញ្ជីឃុំតាមកម្រិតសិទ្ធិ: ឃុំឃើញតែឃុំខ្លួន, ស្រុកឃើញឃុំក្នុងស្រុកខ្លួន, ខេត្តឃើញឃុំក្នុងខេត្តខ្លួន"""
+  is_admin, user_prov, user_dist, user_comm, _, _ = get_user_scope()
+  if not is_admin:
+    if user_comm:
+      return [user_comm]
+    p = user_prov or chosen_prov
+    d = user_dist or chosen_dist
+    comms = get_communes(p, d)
+    return ([all_label] + comms) if (prefix_all and len(comms) > 1) else comms
+  comms = get_communes(chosen_prov, chosen_dist)
+  return ([all_label] + comms) if prefix_all else comms
+
+
+def get_scoped_schools(chosen_prov=None, chosen_dist=None, chosen_comm=None, prefix_all=False, all_label="-- ទាំងអស់ --"):
+  """បញ្ជីសាលារៀនតាមកម្រិតសិទ្ធិ ឃុំ/ស្រុក/ខេត្ត"""
+  is_admin, user_prov, user_dist, user_comm, _, _ = get_user_scope()
+  p = user_prov if (not is_admin and user_prov) else chosen_prov
+  d = user_dist if (not is_admin and user_dist) else chosen_dist
+  c = user_comm if (not is_admin and user_comm) else chosen_comm
+  schs = get_filtered_schools(p, d, c)
+  return ([all_label] + schs) if prefix_all else schs
+
+
 def get_all_schools():
   cursor.execute(
       "SELECT DISTINCT name FROM schools WHERE TRIM(name) != '' ORDER BY name"
@@ -1553,7 +1613,7 @@ def save_location(province, district, commune, village=""):
 
 
 def save_school(name, commune, district="", province="", village=""):
-  n = name.strip() if name else ""
+  n = clean_school_name(name)
   c = commune.strip() if commune else ""
   d = district.strip() if district else ""
   p = province.strip() if province else ""
@@ -3540,11 +3600,25 @@ def generate_monthly_claim_html(district, commune, school_name, voucher_no, d_st
     u_str = f"{int(round(u_price)):,} ៛"
     t_str = f"{int(round(t_price)):,} ៛"
 
+    # បង្រួមទំហំអក្សរ ឬទម្លាក់ជួរចុះក្រោមករណីមានលេខយោងច្រើន
+    v_parts = [p.strip() for p in v_ref.split(",") if p.strip()] if "," in v_ref else [v_ref]
+    if len(v_parts) > 6:
+      chunked_lines = [", ".join(v_parts[i:i+4]) for i in range(0, len(v_parts), 4)]
+      v_html_cell = "<br>".join(chunked_lines)
+      v_style = "font-size: 8.5px; line-height: 1.15;"
+    elif len(v_parts) > 3 or len(v_ref) > 18:
+      chunked_lines = [", ".join(v_parts[i:i+3]) for i in range(0, len(v_parts), 3)]
+      v_html_cell = "<br>".join(chunked_lines)
+      v_style = "font-size: 9.5px; line-height: 1.2;"
+    else:
+      v_html_cell = v_ref
+      v_style = "font-size: 11px;"
+
     rows_html.append(f"""
     <tr>
       <td class="col-num">{r_num_kh}</td>
       <td class="col-name">{name}</td>
-      <td class="col-ref">{v_ref}</td>
+      <td class="col-ref" style="{v_style}">{v_html_cell}</td>
       <td class="col-qty">{q_str}</td>
       <td class="col-price">{u_str}</td>
       <td class="col-total">{t_str}</td>
@@ -4188,11 +4262,27 @@ def generate_monthly_claim_excel(district, commune, school_name, voucher_no, d_s
     c_b.alignment = Alignment(horizontal="left", vertical="center", indent=1)
     c_b.font = Font(name=font_family, size=10, color="0C4A8A")
 
-    c_c = ws.cell(row=r, column=3, value=v_ref)
+    v_ref_str = str(v_ref or "").strip()
+    v_parts = [p.strip() for p in v_ref_str.split(",") if p.strip()] if "," in v_ref_str else [v_ref_str]
+    if len(v_parts) > 6:
+      chunked_lines = [", ".join(v_parts[i:i+4]) for i in range(0, len(v_parts), 4)]
+      v_excel_val = "\n".join(chunked_lines)
+      f_size = 8
+      row_h = 16 + (len(chunked_lines) * 11)
+    elif len(v_parts) > 3 or len(v_ref_str) > 18:
+      chunked_lines = [", ".join(v_parts[i:i+3]) for i in range(0, len(v_parts), 3)]
+      v_excel_val = "\n".join(chunked_lines)
+      f_size = 8.5
+      row_h = 16 + (len(chunked_lines) * 12)
+    else:
+      v_excel_val = v_ref_str
+      f_size = 10
+      row_h = 20
+
+    ws.row_dimensions[r].height = max(ws.row_dimensions[r].height or 20, row_h)
+    c_c = ws.cell(row=r, column=3, value=v_excel_val)
     c_c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    c_c.font = Font(name=font_family, size=9 if len(str(v_ref or "")) > 15 else 10, color="0C4A8A", bold=True)
-    if len(str(v_ref or "")) > 25:
-      ws.row_dimensions[r].height = max(ws.row_dimensions[r].height or 20, 26)
+    c_c.font = Font(name=font_family, size=f_size, color="0C4A8A", bold=True)
 
     c_d = ws.cell(row=r, column=4, value=qty)
     c_d.alignment = Alignment(horizontal="center", vertical="center")
@@ -4364,11 +4454,13 @@ if not st.session_state.get("logged_in") or not st.session_state.get(
       st.markdown("---")
       st.markdown("##### 🔑 ព័ត៌មានគណនីសម្រាប់ចូលប្រព័ន្ធ (Login Accounts)")
       st.info(
-          "🛡️ **គណនី Admin (សិទ្ធិគ្រប់គ្រងទូទាំងប្រព័ន្ធ):**\n"
-          "- ឈ្មោះគណនី: `admin` | ពាក្យសម្ងាត់: `admin123`\n\n"
-          "👤 **គណនីរដ្ឋបាលឃុំ និងសាលារៀន (MoEYS Standard):**\n"
-          "- ឈ្មោះគណនី: **លេខកូដក្រសួងអប់រំ** (ឧ. `171206` សម្រាប់ឃុំស្លែងស្ពាន ឬ `17120601` សម្រាប់សាលាភ្នំដី)\n"
-          "- ពាក្យសម្ងាត់រួម: `user123456789`"
+          "🏛️ **គណនីមន្ទីរអប់រំខេត្ត (២៥ រាជធានី-ខេត្ត):**\n"
+          "- ឈ្មោះគណនី: **លេខកូដខេត្ត** (ឧ. `01` ដល់ `25`)\n\n"
+          "🏢 **គណនីការិយាល័យអប់រំស្រុក (២១០ ក្រុង/ស្រុក/ខណ្ឌ):**\n"
+          "- ឈ្មោះគណនី: **លេខកូដស្រុក** (ឧ. `0102` ដល់ `2507`)\n\n"
+          "🏘️ **គណនីរដ្ឋបាលឃុំ/សង្កាត់ (១,៦៥២ ឃុំ/សង្កាត់):**\n"
+          "- ឈ្មោះគណនី: **លេខកូដឃុំ** (ឧ. `010201` ដល់ `250705`)\n\n"
+          "🔑 **ពាក្យសម្ងាត់រួមសម្រាប់ User:** `user123456789`"
       )
   st.stop()
 
@@ -4389,11 +4481,14 @@ st.sidebar.markdown(f"### 👤 {user_info['name']}")
 if is_admin:
   st.sidebar.success("🛡️ **កម្រិតសិទ្ធិ:** `Admin (គ្រប់គ្រងពេញលេញ)`")
 else:
-  scope_lbl = f"ឃុំ **{user_comm}**"
-  if user_sch:
-    scope_lbl += f" | សាលា **{user_sch}**"
+  if user_comm:
+    scope_lbl = f"ឃុំ **{user_comm}** (ស្រុក{user_dist} ខេត្ត{user_prov})"
+  elif user_dist:
+    scope_lbl = f"ស្រុក **{user_dist}** (ខេត្ត{user_prov})"
+  elif user_prov:
+    scope_lbl = f"ខេត្ត **{user_prov}** (ទូទាំងខេត្ត)"
   else:
-    scope_lbl += " (គ្រប់សាលាក្នុងឃុំ)"
+    scope_lbl = "ទូទៅ"
   st.sidebar.info(f"📍 **ដែនសមត្ថកិច្ច:** {scope_lbl}")
 
 st.sidebar.caption(
@@ -4456,11 +4551,11 @@ if menu == "📊 Dashboard":
   # ----------------- តម្រងជ្រើសរើសតាមខែ ឆ្នាំ និងទីតាំង -----------------
   with st.container(border=True):
     st.markdown("##### 🔍 តម្រងជ្រើសរើសកាលបរិច្ឆេទ និងទីតាំង (Filters)")
-    f_c1, f_c2, f_c3, f_c4 = st.columns([1, 1, 1.2, 1.2])
+    f_d1, f_d2 = st.columns([1, 1])
 
     cur_year = date.today().year
     year_options = ["-- ទាំងអស់ --", str(cur_year), str(cur_year - 1), str(cur_year - 2), str(cur_year + 1)]
-    with f_c1:
+    with f_d1:
       sel_year = st.selectbox("📅 ជ្រើសរើសឆ្នាំ", year_options, index=1, key="dash_year")
 
     month_dict = {
@@ -4478,33 +4573,36 @@ if menu == "📊 Dashboard":
         "11 - វិច្ឆិកា": "11",
         "12 - ធ្នូ": "12",
     }
-    with f_c2:
+    with f_d2:
       sel_month_label = st.selectbox("🗓️ ជ្រើសរើសខែ", list(month_dict.keys()), index=0, key="dash_month")
       sel_month = month_dict[sel_month_label]
 
-    # កំណត់ដែនសមត្ថកិច្ចទីតាំង (Admin vs User)
-    if is_admin:
-      with f_c3:
-        comm_list = ["-- ទាំងអស់ --"] + get_communes()
-        sel_commune = st.selectbox("🏛️ ឃុំ/សង្កាត់", comm_list, key="dash_comm")
-      with f_c4:
-        if sel_commune != "-- ទាំងអស់ --":
-          sch_list = ["-- ទាំងអស់ --"] + get_schools_by_commune(sel_commune)
-        else:
-          sch_list = ["-- ទាំងអស់ --"] + get_all_schools()
-        sel_school = st.selectbox("🏫 សាលារៀន", sch_list, key="dash_school")
-    else:
-      sel_commune = user_comm
-      with f_c3:
-        st.text_input("🏛️ ឃុំ/សង្កាត់", value=sel_commune or "ឃុំរបស់អ្នក", disabled=True)
-      with f_c4:
-        if user_sch:
-          sel_school = user_sch
-          st.text_input("🏫 សាលារៀន", value=sel_school, disabled=True)
-        else:
-          sch_list = ["-- ទាំងអស់ក្នុងឃុំ --"] + get_schools_by_commune(sel_commune)
-          picked_s = st.selectbox("🏫 សាលារៀនក្នុងឃុំ", sch_list, key="dash_user_sch")
-          sel_school = picked_s if picked_s != "-- ទាំងអស់ក្នុងឃុំ --" else "-- ទាំងអស់ --"
+    # Cascading Location Filter (Province -> District -> Commune -> School)
+    f_lp, f_ld, f_lc, f_ls = st.columns([1.2, 1.2, 1.2, 1.4])
+    with f_lp:
+      prov_opts = get_scoped_location_choices(prefix_all=is_admin)
+      sel_province = st.selectbox("🏛️ ខេត្ត/រាជធានី", prov_opts, key="dash_prov")
+    
+    with f_ld:
+      p_for_d = sel_province if sel_province != "-- ទាំងអស់ --" else None
+      dist_opts = get_scoped_district_choices(p_for_d, prefix_all=(is_admin or (not user_dist and not user_comm)))
+      sel_district = st.selectbox("🏢 ស្រុក/ខណ្ឌ", dist_opts, key="dash_dist")
+
+    with f_lc:
+      d_for_c = sel_district if sel_district != "-- ទាំងអស់ --" else None
+      comm_opts = get_scoped_commune_choices(p_for_d, d_for_c, prefix_all=(is_admin or not user_comm))
+      sel_commune = st.selectbox("🏘️ ឃុំ/សង្កាត់", comm_opts, key="dash_comm")
+
+    with f_ls:
+      c_for_s = sel_commune if sel_commune != "-- ទាំងអស់ --" else None
+      sch_opts = get_scoped_schools(p_for_d, d_for_c, c_for_s, prefix_all=True)
+      sel_school = st.selectbox("🏫 សាលារៀន", sch_opts, key="dash_school")
+
+  # Determine effective territory filters
+  eff_school = sel_school if (sel_school and sel_school != "-- ទាំងអស់ --") else None
+  eff_commune = sel_commune if (sel_commune and sel_commune != "-- ទាំងអស់ --") else (user_comm if not is_admin else None)
+  eff_district = sel_district if (sel_district and sel_district != "-- ទាំងអស់ --") else (user_dist if not is_admin else None)
+  eff_province = sel_province if (sel_province and sel_province != "-- ទាំងអស់ --") else (user_prov if not is_admin else None)
 
   # ----------------- កសាង SQL Queries តាម Filter -----------------
   # ១. ចំណូល (ពី daily_records sales + transactions type='ចំណូល')
@@ -4516,12 +4614,18 @@ if menu == "📊 Dashboard":
   if sel_month:
     dr_where.append("strftime('%m', dr.date) = ?")
     dr_params.append(sel_month)
-  if sel_school and sel_school != "-- ទាំងអស់ --":
+  if eff_school:
     dr_where.append("dr.school_name = ?")
-    dr_params.append(sel_school)
-  elif sel_commune and sel_commune != "-- ទាំងអស់ --":
+    dr_params.append(eff_school)
+  elif eff_commune:
     dr_where.append("dr.school_name IN (SELECT name FROM schools WHERE commune = ?)")
-    dr_params.append(sel_commune)
+    dr_params.append(eff_commune)
+  elif eff_district:
+    dr_where.append("dr.school_name IN (SELECT name FROM schools WHERE district = ?)")
+    dr_params.append(eff_district)
+  elif eff_province:
+    dr_where.append("dr.school_name IN (SELECT name FROM schools WHERE province = ?)")
+    dr_params.append(eff_province)
 
   dr_sql = "SELECT SUM(dr.total_price) FROM daily_records dr"
   if dr_where:
@@ -4537,12 +4641,18 @@ if menu == "📊 Dashboard":
   if sel_month:
     tr_inc_where.append("strftime('%m', date) = ?")
     tr_inc_params.append(sel_month)
-  if sel_school and sel_school != "-- ទាំងអស់ --":
+  if eff_school:
     tr_inc_where.append("school_name = ?")
-    tr_inc_params.append(sel_school)
-  elif sel_commune and sel_commune != "-- ទាំងអស់ --":
-    tr_inc_where.append("commune = ?")
-    tr_inc_params.append(sel_commune)
+    tr_inc_params.append(eff_school)
+  elif eff_commune:
+    tr_inc_where.append("(commune = ? OR school_name IN (SELECT name FROM schools WHERE commune = ?))")
+    tr_inc_params.extend([eff_commune, eff_commune])
+  elif eff_district:
+    tr_inc_where.append("(commune IN (SELECT commune FROM locations WHERE district = ?) OR school_name IN (SELECT name FROM schools WHERE district = ?))")
+    tr_inc_params.extend([eff_district, eff_district])
+  elif eff_province:
+    tr_inc_where.append("(commune IN (SELECT commune FROM locations WHERE province = ?) OR school_name IN (SELECT name FROM schools WHERE province = ?))")
+    tr_inc_params.extend([eff_province, eff_province])
 
   tr_inc_sql = f"SELECT SUM(amount) FROM transactions WHERE {' AND '.join(tr_inc_where)}"
   cursor.execute(tr_inc_sql, tuple(tr_inc_params))
@@ -4558,12 +4668,18 @@ if menu == "📊 Dashboard":
   if sel_month:
     tr_exp_where.append("strftime('%m', date) = ?")
     tr_exp_params.append(sel_month)
-  if sel_school and sel_school != "-- ទាំងអស់ --":
+  if eff_school:
     tr_exp_where.append("school_name = ?")
-    tr_exp_params.append(sel_school)
-  elif sel_commune and sel_commune != "-- ទាំងអស់ --":
-    tr_exp_where.append("commune = ?")
-    tr_exp_params.append(sel_commune)
+    tr_exp_params.append(eff_school)
+  elif eff_commune:
+    tr_exp_where.append("(commune = ? OR school_name IN (SELECT name FROM schools WHERE commune = ?))")
+    tr_exp_params.extend([eff_commune, eff_commune])
+  elif eff_district:
+    tr_exp_where.append("(commune IN (SELECT commune FROM locations WHERE district = ?) OR school_name IN (SELECT name FROM schools WHERE district = ?))")
+    tr_exp_params.extend([eff_district, eff_district])
+  elif eff_province:
+    tr_exp_where.append("(commune IN (SELECT commune FROM locations WHERE province = ?) OR school_name IN (SELECT name FROM schools WHERE province = ?))")
+    tr_exp_params.extend([eff_province, eff_province])
 
   tr_exp_sql = f"SELECT SUM(amount) FROM transactions WHERE {' AND '.join(tr_exp_where)}"
   cursor.execute(tr_exp_sql, tuple(tr_exp_params))
@@ -4578,12 +4694,18 @@ if menu == "📊 Dashboard":
   if sel_month:
     p_debt_where.append("strftime('%m', date) = ?")
     p_debt_params.append(sel_month)
-  if sel_school and sel_school != "-- ទាំងអស់ --":
+  if eff_school:
     p_debt_where.append("school_name = ?")
-    p_debt_params.append(sel_school)
-  elif sel_commune and sel_commune != "-- ទាំងអស់ --":
-    p_debt_where.append("commune = ?")
-    p_debt_params.append(sel_commune)
+    p_debt_params.append(eff_school)
+  elif eff_commune:
+    p_debt_where.append("(commune = ? OR school_name IN (SELECT name FROM schools WHERE commune = ?))")
+    p_debt_params.extend([eff_commune, eff_commune])
+  elif eff_district:
+    p_debt_where.append("(commune IN (SELECT commune FROM locations WHERE district = ?) OR school_name IN (SELECT name FROM schools WHERE district = ?))")
+    p_debt_params.extend([eff_district, eff_district])
+  elif eff_province:
+    p_debt_where.append("(commune IN (SELECT commune FROM locations WHERE province = ?) OR school_name IN (SELECT name FROM schools WHERE province = ?))")
+    p_debt_params.extend([eff_province, eff_province])
 
   p_debt_sql = f"SELECT SUM(total_price - COALESCE(paid_amount, 0)) FROM purchases WHERE {' AND '.join(p_debt_where)}"
   cursor.execute(p_debt_sql, tuple(p_debt_params))
@@ -4662,24 +4784,51 @@ if menu == "📊 Dashboard":
       # Income this month
       w_inc = ["type='ចំណូល'", "strftime('%Y', date) = ?", "strftime('%m', date) = ?"]
       p_inc = [target_year, m_str]
-      if sel_commune and sel_commune != "-- ទាំងអស់ --":
-        w_inc.append("commune = ?")
-        p_inc.append(sel_commune)
+      if eff_school:
+        w_inc.append("school_name = ?")
+        p_inc.append(eff_school)
+      elif eff_commune:
+        w_inc.append("(commune = ? OR school_name IN (SELECT name FROM schools WHERE commune = ?))")
+        p_inc.extend([eff_commune, eff_commune])
+      elif eff_district:
+        w_inc.append("(commune IN (SELECT commune FROM locations WHERE district = ?) OR school_name IN (SELECT name FROM schools WHERE district = ?))")
+        p_inc.extend([eff_district, eff_district])
+      elif eff_province:
+        w_inc.append("(commune IN (SELECT commune FROM locations WHERE province = ?) OR school_name IN (SELECT name FROM schools WHERE province = ?))")
+        p_inc.extend([eff_province, eff_province])
       m_other_inc = cursor.execute(f"SELECT SUM(amount) FROM transactions WHERE {' AND '.join(w_inc)}", tuple(p_inc)).fetchone()[0] or 0.0
 
       w_dr = ["strftime('%Y', dr.date) = ?", "strftime('%m', dr.date) = ?"]
       p_dr = [target_year, m_str]
-      if sel_commune and sel_commune != "-- ទាំងអស់ --":
+      if eff_school:
+        w_dr.append("dr.school_name = ?")
+        p_dr.append(eff_school)
+      elif eff_commune:
         w_dr.append("dr.school_name IN (SELECT name FROM schools WHERE commune = ?)")
-        p_dr.append(sel_commune)
+        p_dr.append(eff_commune)
+      elif eff_district:
+        w_dr.append("dr.school_name IN (SELECT name FROM schools WHERE district = ?)")
+        p_dr.append(eff_district)
+      elif eff_province:
+        w_dr.append("dr.school_name IN (SELECT name FROM schools WHERE province = ?)")
+        p_dr.append(eff_province)
       m_dr_inc = cursor.execute(f"SELECT SUM(dr.total_price) FROM daily_records dr WHERE {' AND '.join(w_dr)}", tuple(p_dr)).fetchone()[0] or 0.0
 
       # Expense this month
       w_exp = ["type='ចំណាយ'", "strftime('%Y', date) = ?", "strftime('%m', date) = ?"]
       p_exp = [target_year, m_str]
-      if sel_commune and sel_commune != "-- ទាំងអស់ --":
-        w_exp.append("commune = ?")
-        p_exp.append(sel_commune)
+      if eff_school:
+        w_exp.append("school_name = ?")
+        p_exp.append(eff_school)
+      elif eff_commune:
+        w_exp.append("(commune = ? OR school_name IN (SELECT name FROM schools WHERE commune = ?))")
+        p_exp.extend([eff_commune, eff_commune])
+      elif eff_district:
+        w_exp.append("(commune IN (SELECT commune FROM locations WHERE district = ?) OR school_name IN (SELECT name FROM schools WHERE district = ?))")
+        p_exp.extend([eff_district, eff_district])
+      elif eff_province:
+        w_exp.append("(commune IN (SELECT commune FROM locations WHERE province = ?) OR school_name IN (SELECT name FROM schools WHERE province = ?))")
+        p_exp.extend([eff_province, eff_province])
       m_exp = cursor.execute(f"SELECT SUM(amount) FROM transactions WHERE {' AND '.join(w_exp)}", tuple(p_exp)).fetchone()[0] or 0.0
 
       monthly_data.append({"ខែ": m_label, "ប្រភេទ": "ចំណូល", "ទឹកប្រាក់ (៛)": float(m_other_inc + m_dr_inc)})
@@ -4740,16 +4889,34 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
       st.rerun()
 
   # ----------------- ផ្ទាំងសង្ខេបស្ថិតិទូទៅ (Summary Metric Cards) -----------------
-  cnt_prov = len(get_provinces())
-  cnt_dist = cursor.execute("SELECT COUNT(DISTINCT district) FROM locations WHERE district IS NOT NULL AND district != ''").fetchone()[0]
-  cnt_comm = cursor.execute("SELECT COUNT(DISTINCT commune) FROM locations WHERE commune IS NOT NULL AND commune != ''").fetchone()[0]
-  cnt_sch_all = cursor.execute("SELECT COUNT(*) FROM schools").fetchone()[0]
+  if is_admin:
+    cnt_prov = len(get_provinces())
+    cnt_dist = cursor.execute("SELECT COUNT(DISTINCT district) FROM locations WHERE district IS NOT NULL AND district != ''").fetchone()[0]
+    cnt_comm = cursor.execute("SELECT COUNT(DISTINCT commune) FROM locations WHERE commune IS NOT NULL AND commune != ''").fetchone()[0]
+    cnt_sch_all = cursor.execute("SELECT COUNT(*) FROM schools").fetchone()[0]
+  elif user_comm:
+    cnt_prov = 1
+    cnt_dist = 1
+    cnt_comm = 1
+    cnt_sch_all = cursor.execute("SELECT COUNT(*) FROM schools WHERE commune=?", (user_comm,)).fetchone()[0]
+  elif user_dist:
+    cnt_prov = 1
+    cnt_dist = 1
+    cnt_comm = cursor.execute("SELECT COUNT(DISTINCT commune) FROM locations WHERE district=?", (user_dist,)).fetchone()[0]
+    cnt_sch_all = cursor.execute("SELECT COUNT(*) FROM schools WHERE district=?", (user_dist,)).fetchone()[0]
+  elif user_prov:
+    cnt_prov = 1
+    cnt_dist = cursor.execute("SELECT COUNT(DISTINCT district) FROM locations WHERE province=?", (user_prov,)).fetchone()[0]
+    cnt_comm = cursor.execute("SELECT COUNT(DISTINCT commune) FROM locations WHERE province=?", (user_prov,)).fetchone()[0]
+    cnt_sch_all = cursor.execute("SELECT COUNT(*) FROM schools WHERE province=?", (user_prov,)).fetchone()[0]
+  else:
+    cnt_prov, cnt_dist, cnt_comm, cnt_sch_all = 0, 0, 0, 0
 
   mc1, mc2, mc3, mc4 = st.columns(4)
   with mc1: st.metric("🏛️ ខេត្ត/រាជធានី", f"{cnt_prov} ខេត្ត/ក្រុង")
   with mc2: st.metric("🏢 ស្រុក/ខណ្ឌ/ក្រុង", f"{cnt_dist} ស្រុក")
   with mc3: st.metric("🏘️ ឃុំ/សង្កាត់", f"{cnt_comm:,} ឃុំ")
-  with mc4: st.metric("🏫 សាលាបឋមសិក្សា", f"{cnt_sch_all:,} សាលា")
+  with mc4: st.metric("🏫 សាលារៀន", f"{cnt_sch_all:,} សាលា")
   st.markdown("---")
 
   tab1, tab2 = st.tabs(["📍 គ្រប់គ្រងទីតាំងរដ្ឋបាល", "🏫 គ្រប់គ្រងសាលារៀន"])
@@ -4767,15 +4934,17 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
       st.markdown("##### 🔍 តម្រងស្វែងរកទីតាំងរដ្ឋបាល (Cascading Filter: ខេត្ត ➔ ស្រុក ➔ ឃុំ)")
       f_lp, f_ld, f_lc, f_lq = st.columns([1.5, 1.5, 1.5, 2.5])
       
-      prov_list_loc = ["-- ទាំងអស់ --"] + get_provinces()
+      prov_list_loc = get_scoped_location_choices(prefix_all=is_admin)
       with f_lp:
         sel_loc_p = st.selectbox("១. ខេត្ត/រាជធានី", prov_list_loc, key="f_loc_p")
       
-      dist_list_loc = ["-- ទាំងអស់ --"] + (get_districts(sel_loc_p) if sel_loc_p != "-- ទាំងអស់ --" else get_districts())
+      p_loc_d = sel_loc_p if sel_loc_p != "-- ទាំងអស់ --" else None
+      dist_list_loc = get_scoped_district_choices(p_loc_d, prefix_all=(is_admin or (not user_dist and not user_comm)))
       with f_ld:
         sel_loc_d = st.selectbox("២. ស្រុក/ខណ្ឌ", dist_list_loc, key="f_loc_d")
       
-      comm_list_loc = ["-- ទាំងអស់ --"] + get_communes(sel_loc_p if sel_loc_p != "-- ទាំងអស់ --" else None, sel_loc_d if sel_loc_d != "-- ទាំងអស់ --" else None)
+      d_loc_c = sel_loc_d if sel_loc_d != "-- ទាំងអស់ --" else None
+      comm_list_loc = get_scoped_commune_choices(p_loc_d, d_loc_c, prefix_all=(is_admin or not user_comm))
       with f_lc:
         sel_loc_c = st.selectbox("៣. ឃុំ/សង្កាត់", comm_list_loc, key="f_loc_c")
       
@@ -4791,15 +4960,35 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
         FROM locations WHERE 1=1
       """
       p_loc = []
-      if sel_loc_p != "-- ទាំងអស់ --":
-        q_sql_loc += " AND province = ?"
-        p_loc.append(sel_loc_p)
-      if sel_loc_d != "-- ទាំងអស់ --":
-        q_sql_loc += " AND district = ?"
-        p_loc.append(sel_loc_d)
-      if sel_loc_c != "-- ទាំងអស់ --":
-        q_sql_loc += " AND commune = ?"
-        p_loc.append(sel_loc_c)
+      if not is_admin:
+        if user_comm:
+          q_sql_loc += " AND commune = ?"
+          p_loc.append(user_comm)
+        elif user_dist:
+          q_sql_loc += " AND district = ?"
+          p_loc.append(user_dist)
+          if sel_loc_c != "-- ទាំងអស់ --":
+            q_sql_loc += " AND commune = ?"
+            p_loc.append(sel_loc_c)
+        elif user_prov:
+          q_sql_loc += " AND province = ?"
+          p_loc.append(user_prov)
+          if sel_loc_d != "-- ទាំងអស់ --":
+            q_sql_loc += " AND district = ?"
+            p_loc.append(sel_loc_d)
+          if sel_loc_c != "-- ទាំងអស់ --":
+            q_sql_loc += " AND commune = ?"
+            p_loc.append(sel_loc_c)
+      else:
+        if sel_loc_p != "-- ទាំងអស់ --":
+          q_sql_loc += " AND province = ?"
+          p_loc.append(sel_loc_p)
+        if sel_loc_d != "-- ទាំងអស់ --":
+          q_sql_loc += " AND district = ?"
+          p_loc.append(sel_loc_d)
+        if sel_loc_c != "-- ទាំងអស់ --":
+          q_sql_loc += " AND commune = ?"
+          p_loc.append(sel_loc_c)
       if q_loc_val:
         q_sql_loc += " AND (LOWER(village) LIKE ? OR LOWER(commune) LIKE ? OR LOWER(district) LIKE ? OR LOWER(province) LIKE ? OR commune_code LIKE ?)"
         p_loc.extend([f"%{q_loc_val}%"] * 5)
@@ -4934,11 +5123,23 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
           st.error(msg)
 
     with sub_t2:
-      st.subheader("✏️ កែប្រែ ឬ 🗑️ លុបទីតាំងរដ្ឋបាល")
-      all_locs = cursor.execute(
-          "SELECT id, province, district, commune, village FROM locations WHERE (? IS NULL OR commune=?) ORDER BY id DESC",
-          (user_comm if (not is_admin and user_comm) else None, user_comm if (not is_admin and user_comm) else None)
-      ).fetchall()
+      loc_scope_where = []
+      loc_scope_params = []
+      if not is_admin:
+        if user_comm:
+          loc_scope_where.append("commune = ?")
+          loc_scope_params.append(user_comm)
+        elif user_dist:
+          loc_scope_where.append("district = ?")
+          loc_scope_params.append(user_dist)
+        elif user_prov:
+          loc_scope_where.append("province = ?")
+          loc_scope_params.append(user_prov)
+      q_loc_str = "SELECT id, province, district, commune, village FROM locations"
+      if loc_scope_where:
+        q_loc_str += " WHERE " + " AND ".join(loc_scope_where)
+      q_loc_str += " ORDER BY id DESC"
+      all_locs = cursor.execute(q_loc_str, tuple(loc_scope_params)).fetchall()
 
       if all_locs:
         del_loc_mode = st.radio(
@@ -5186,15 +5387,17 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
       st.markdown("##### 🔍 តម្រងស្វែងរកសាលារៀនបឋមសិក្សា (Cascading Filter: ខេត្ត ➔ ស្រុក ➔ ឃុំ)")
       f_sp, f_sd, f_sc, f_sq = st.columns([1.5, 1.5, 1.5, 2.5])
       
-      prov_list_sch = ["-- ទាំងអស់ --"] + get_provinces()
+      prov_list_sch = get_scoped_location_choices(prefix_all=is_admin)
       with f_sp:
         sel_sch_p = st.selectbox("១. ខេត្ត/រាជធានី", prov_list_sch, key="f_sch_p")
       
-      dist_list_sch = ["-- ទាំងអស់ --"] + (get_districts(sel_sch_p) if sel_sch_p != "-- ទាំងអស់ --" else get_districts())
+      p_sch_d = sel_sch_p if sel_sch_p != "-- ទាំងអស់ --" else None
+      dist_list_sch = get_scoped_district_choices(p_sch_d, prefix_all=(is_admin or (not user_dist and not user_comm)))
       with f_sd:
         sel_sch_d = st.selectbox("២. ស្រុក/ខណ្ឌ", dist_list_sch, key="f_sch_d")
       
-      comm_list_sch = ["-- ទាំងអស់ --"] + get_communes(sel_sch_p if sel_sch_p != "-- ទាំងអស់ --" else None, sel_sch_d if sel_sch_d != "-- ទាំងអស់ --" else None)
+      d_sch_c = sel_sch_d if sel_sch_d != "-- ទាំងអស់ --" else None
+      comm_list_sch = get_scoped_commune_choices(p_sch_d, d_sch_c, prefix_all=(is_admin or not user_comm))
       with f_sc:
         sel_sch_c = st.selectbox("៣. ឃុំ/សង្កាត់", comm_list_sch, key="f_sch_c")
       
@@ -5209,9 +5412,25 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
         FROM schools WHERE 1=1
       """
       p_sch = []
-      if not is_admin and user_comm:
-        q_sql_sch += " AND commune = ?"
-        p_sch.append(user_comm)
+      if not is_admin:
+        if user_comm:
+          q_sql_sch += " AND commune = ?"
+          p_sch.append(user_comm)
+        elif user_dist:
+          q_sql_sch += " AND district = ?"
+          p_sch.append(user_dist)
+          if sel_sch_c != "-- ទាំងអស់ --":
+            q_sql_sch += " AND commune = ?"
+            p_sch.append(sel_sch_c)
+        elif user_prov:
+          q_sql_sch += " AND province = ?"
+          p_sch.append(user_prov)
+          if sel_sch_d != "-- ទាំងអស់ --":
+            q_sql_sch += " AND district = ?"
+            p_sch.append(sel_sch_d)
+          if sel_sch_c != "-- ទាំងអស់ --":
+            q_sql_sch += " AND commune = ?"
+            p_sch.append(sel_sch_c)
       else:
         if sel_sch_p != "-- ទាំងអស់ --":
           q_sql_sch += " AND province = ?"
@@ -5381,12 +5600,27 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
 
     with sch_sub2:
       st.subheader("✏️ កែប្រែ ឬ 🗑️ លុបសាលារៀន")
-      if not is_admin and user_comm:
-        all_schools_data = cursor.execute(
-            "SELECT id, name, commune, district, province, village FROM schools WHERE commune=?"
-            " ORDER BY commune, name",
-            (user_comm,)
-        ).fetchall()
+      if not is_admin:
+        if user_comm:
+          all_schools_data = cursor.execute(
+              "SELECT id, name, commune, district, province, village FROM schools WHERE commune=?"
+              " ORDER BY commune, name",
+              (user_comm,)
+          ).fetchall()
+        elif user_dist:
+          all_schools_data = cursor.execute(
+              "SELECT id, name, commune, district, province, village FROM schools WHERE district=?"
+              " ORDER BY commune, name",
+              (user_dist,)
+          ).fetchall()
+        elif user_prov:
+          all_schools_data = cursor.execute(
+              "SELECT id, name, commune, district, province, village FROM schools WHERE province=?"
+              " ORDER BY commune, name",
+              (user_prov,)
+          ).fetchall()
+        else:
+          all_schools_data = []
       else:
         all_schools_data = cursor.execute(
             "SELECT id, name, commune, district, province, village FROM schools"
@@ -5681,11 +5915,12 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
               if not ed_sname.strip() or not ed_scomm.strip():
                 st.error("ឈ្មោះសាលា និង ឃុំ មិនអាចទុកឱ្យទទេបានទេ!")
               else:
+                clean_nm = clean_school_name(ed_sname)
                 cursor.execute(
                     "UPDATE schools SET name=?, commune=?, district=?,"
                     " province=?, village=? WHERE id=?",
                     (
-                        ed_sname.strip(),
+                        clean_nm,
                         ed_scomm.strip(),
                         ed_sdist.strip(),
                         ed_sprov.strip(),
@@ -5720,7 +5955,7 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
       # Sample template download
       sch_tpl = generate_sample_excel(
           ["ឈ្មោះសាលារៀន", "ឃុំ/សង្កាត់", "ស្រុក/ខណ្ឌ", "ខេត្ត/ក្រុង", "ភូមិ"],
-          ["សាលាបឋមសិក្សា ស្លែងស្ពាន", "ស្លែងស្ពាន", "ស្រីស្នំ", "សៀមរាប", "ស្លែងស្ពាន"],
+          ["ស្លែងស្ពាន", "ស្លែងស្ពាន", "ស្រីស្នំ", "សៀមរាប", "ស្លែងស្ពាន"],
       )
       st.download_button(
           "📥 ទាញយកគំរូឯកសារ Excel (School Template)",
@@ -5794,13 +6029,22 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
           st.warning("មិនអាចទាញយកទិន្នន័យតារាងពីឯកសារនេះបានទេ!")
 
     st.divider()
-    st.subheader("📋 បញ្ជីសាលារៀនទាំងអស់ក្នុងប្រព័ន្ធ")
-    df_sch = pd.read_sql_query(
-        "SELECT name as [ឈ្មោះសាលារៀន], commune as [ឃុំ/សង្កាត់], district as"
-        " [ស្រុក/ខណ្ឌ], province as [ខេត្ត/ក្រុង], village as [ភូមិ] FROM"
-        " schools ORDER BY id DESC",
-        conn,
-    )
+    st.divider()
+    st.subheader("📋 បញ្ជីសាលារៀនក្នុងដែនសមត្ថកិច្ច")
+    q_sch_overview = "SELECT name as [ឈ្មោះសាលារៀន], commune as [ឃុំ/សង្កាត់], district as [ស្រុក/ខណ្ឌ], province as [ខេត្ត/ក្រុង], village as [ភូមិ] FROM schools"
+    p_sch_ov = []
+    if not is_admin:
+      if user_comm:
+        q_sch_overview += " WHERE commune = ?"
+        p_sch_ov.append(user_comm)
+      elif user_dist:
+        q_sch_overview += " WHERE district = ?"
+        p_sch_ov.append(user_dist)
+      elif user_prov:
+        q_sch_overview += " WHERE province = ?"
+        p_sch_ov.append(user_prov)
+    q_sch_overview += " ORDER BY id DESC"
+    df_sch = pd.read_sql_query(q_sch_overview, conn, params=tuple(p_sch_ov))
     st.dataframe(
         add_row_numbers(df_sch), use_container_width=True, hide_index=True
     )
@@ -5829,8 +6073,29 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
   with sup_tab1:
     st.subheader("📋 បញ្ជីអ្នកផ្គត់ផ្គង់ស្បៀងទាំងអស់ក្នុងប្រព័ន្ធ")
     raw_sups = get_all_suppliers()
-    if not is_admin and user_comm:
-      all_sups = [s for s in raw_sups if user_comm in (s.get("target_commune") or "") or user_comm == (s.get("commune") or "") or s.get("supply_level") == "district"]
+    if not is_admin:
+      if user_comm:
+        all_sups = [
+            s for s in raw_sups
+            if user_comm in (s.get("target_commune") or "")
+            or user_comm == (s.get("commune") or "")
+            or (s.get("supply_level") == "district" and (s.get("target_district") == user_dist or s.get("district") == user_dist))
+        ]
+      elif user_dist:
+        all_sups = [
+            s for s in raw_sups
+            if user_dist == (s.get("district") or "")
+            or user_dist == (s.get("target_district") or "")
+            or any(user_dist in str(c) for c in [(s.get("commune") or ""), (s.get("target_commune") or "")])
+        ]
+      elif user_prov:
+        all_sups = [
+            s for s in raw_sups
+            if user_prov == (s.get("province") or "")
+            or user_prov == (s.get("target_province") or "")
+        ]
+      else:
+        all_sups = []
     else:
       all_sups = raw_sups
     if all_sups:
@@ -5921,7 +6186,7 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
 
   # ----------------- TAB 2: បន្ថែម / កែប្រែព័ត៌មាន & តម្លៃទំនិញ -----------------
   with sup_tab2:
-    all_sups_edit = get_all_suppliers()
+    all_sups_edit = all_sups
     def _format_sup_opt(s):
       if s["supply_level"] == "district":
         loc_desc = f"ស្រុក: {s['target_district']} ({s['target_commune'] or 'គ្រប់ឃុំ'})"
@@ -6496,7 +6761,7 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
     st.info("💡 អាចនាំចូលទិន្នន័យអ្នកផ្គត់ផ្គង់ និងអាសយដ្ឋានដោយស្វ័យប្រវត្តិពីឯកសារខាងក្រៅ")
     sup_tpl = generate_sample_excel(
         ["សាលារៀន", "ឈ្មោះអ្នកផ្គត់ផ្គង់", "ភូមិ", "ឃុំ/សង្កាត់", "ក្រុង/ស្រុក", "ខេត្ត", "លេខទូរស័ព្ទ"],
-        ["សាលាបឋមសិក្សា ច្រឡង", "សាត ក្រូត", "ភូមិខ្មែរ", "រោង", "ស្រីស្នំ", "សៀមរាប", "090 854 133"]
+        ["ច្រឡង", "សាត ក្រូត", "ភូមិខ្មែរ", "រោង", "ស្រីស្នំ", "សៀមរាប", "090 854 133"]
     )
     st.download_button(
         "📥 ទាញយកគំរូឯកសារ Excel (Suppliers Template)",
@@ -7670,44 +7935,27 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
     col_d, col_c, col_s, col_dt = st.columns([1, 1, 1.3, 1])
 
     with col_d:
-      dist_list = get_districts()
+      prov_for_d = user_prov if (not is_admin and user_prov) else None
+      dist_list = get_scoped_district_choices(prov_for_d, prefix_all=(is_admin or (not user_dist and not user_comm)))
       if not is_admin and user_dist:
-        dist_options = [user_dist] if user_dist in dist_list else [user_dist] + dist_list
-        inv_dist = st.selectbox("ក្រុង/ស្រុក", dist_options, key="annex3_dist")
+        inv_dist = st.selectbox("ក្រុង/ស្រុក", [user_dist], key="annex3_dist")
       else:
-        inv_dist = st.selectbox("ក្រុង/ស្រុក", ["-- ទាំងអស់ --"] + dist_list, key="annex3_dist")
+        inv_dist = st.selectbox("ក្រុង/ស្រុក", dist_list, key="annex3_dist")
 
     with col_c:
+      d_for_c = inv_dist if inv_dist != "-- ទាំងអស់ --" else (user_dist if not is_admin else None)
+      comm_list = get_scoped_commune_choices(prov_for_d, d_for_c, prefix_all=(is_admin or not user_comm))
       if not is_admin and user_comm:
-        comm_options = [user_comm]
-        inv_comm = st.selectbox("ឃុំ/សង្កាត់", comm_options, key="annex3_comm")
+        inv_comm = st.selectbox("ឃុំ/សង្កាត់", [user_comm], key="annex3_comm")
       else:
-        filtered_communes = get_communes(district=inv_dist if inv_dist != "-- ទាំងអស់ --" else None)
-        inv_comm = st.selectbox("ឃុំ/សង្កាត់", ["-- ទាំងអស់ --"] + filtered_communes, key="annex3_comm")
+        inv_comm = st.selectbox("ឃុំ/សង្កាត់", comm_list, key="annex3_comm")
 
     with col_s:
-      if not is_admin:
-        if user_sch:
-          school_options = [user_sch]
-        elif user_comm:
-          school_options = get_schools_by_commune(user_comm)
-        else:
-          school_options = get_all_schools()
-      elif inv_comm != "-- ទាំងអស់ --":
-        school_options = get_schools_by_commune(inv_comm)
-      elif inv_dist != "-- ទាំងអស់ --":
-        rows_s = cursor.execute(
-            "SELECT DISTINCT name FROM schools WHERE district=? OR commune IN (SELECT commune FROM locations WHERE district=?)",
-            (inv_dist, inv_dist)
-        ).fetchall()
-        school_options = [r[0] for r in rows_s]
-      else:
-        school_options = get_all_schools()
-
+      c_for_s = inv_comm if inv_comm != "-- ទាំងអស់ --" else (user_comm if not is_admin else None)
+      school_options = get_scoped_schools(prov_for_d, d_for_c, c_for_s, prefix_all=False)
       if not school_options:
-        school_options = get_all_schools()
-
-      inv_school = st.selectbox("សាលាបឋមសិក្សា", school_options if school_options else ["គ្មានសាលា"], key="annex3_school")
+        school_options = ["គ្មានសាលា"]
+      inv_school = st.selectbox("សាលារៀន", school_options, key="annex3_school")
 
     # ទាញយកទីតាំងពិតរបស់សាលាពី Database
     prov_db, dist_db, comm_db, vill_db = get_school_location_info(inv_school)
@@ -8377,51 +8625,39 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
           st.success(f"🎉 បានទាញយកទិន្នន័យមុខទំនិញចំនួន {len(imported_items_list)} មុខ ពីសន្លឹក {pick_cl_sheet} ដោយជោគជ័យ!")
           st.rerun()
 
-  # ១. ជួរជ្រើសរើសទីតាំងតៗគ្នា (District -> Commune -> School)
-  c_d, c_c, c_s = st.columns([1, 1, 1.3])
+  # ១. ជួរជ្រើសរើសទីតាំងតៗគ្នា (Province -> District -> Commune -> School)
+  c_p, c_d, c_c, c_s = st.columns([1, 1, 1, 1.2])
+  with c_p:
+    prov_opts_cl = get_scoped_location_choices(prefix_all=is_admin)
+    claim_prov_sel = st.selectbox("ខេត្ត/រាជធានី", prov_opts_cl, key="claim_prov_sel")
   with c_d:
-    dist_list = get_districts()
+    p_cl_d = claim_prov_sel if claim_prov_sel != "-- ទាំងអស់ --" else None
+    dist_list = get_scoped_district_choices(p_cl_d, prefix_all=(is_admin or (not user_dist and not user_comm)))
     if not is_admin and user_dist:
-      dist_opts = [user_dist] if user_dist in dist_list else [user_dist] + dist_list
-      claim_dist_sel = st.selectbox("ក្រុង/ស្រុក/ខណ្ឌ", dist_opts, key="claim_dist_sel")
+      claim_dist_sel = st.selectbox("ក្រុង/ស្រុក/ខណ្ឌ", [user_dist], key="claim_dist_sel")
     else:
-      claim_dist_sel = st.selectbox("ក្រុង/ស្រុក/ខណ្ឌ", ["-- ទាំងអស់ --"] + dist_list, key="claim_dist_sel")
+      claim_dist_sel = st.selectbox("ក្រុង/ស្រុក/ខណ្ឌ", dist_list, key="claim_dist_sel")
   with c_c:
+    d_cl_c = claim_dist_sel if claim_dist_sel != "-- ទាំងអស់ --" else (user_dist if not is_admin else None)
+    comm_list_cl = get_scoped_commune_choices(p_cl_d, d_cl_c, prefix_all=(is_admin or not user_comm))
     if not is_admin and user_comm:
       claim_comm_sel = st.selectbox("ឃុំ/សង្កាត់", [user_comm], key="claim_comm_sel")
     else:
-      filtered_communes = get_communes(district=claim_dist_sel if claim_dist_sel != "-- ទាំងអស់ --" else None)
-      claim_comm_sel = st.selectbox("ឃុំ/សង្កាត់", ["-- ទាំងអស់ --"] + filtered_communes, key="claim_comm_sel")
+      claim_comm_sel = st.selectbox("ឃុំ/សង្កាត់", comm_list_cl, key="claim_comm_sel")
   with c_s:
-    if not is_admin:
-      if user_sch:
-        school_options = [user_sch]
-      elif user_comm:
-        school_options = get_schools_by_commune(user_comm)
-      else:
-        school_options = get_all_schools()
-    elif claim_comm_sel != "-- ទាំងអស់ --":
-      school_options = get_schools_by_commune(claim_comm_sel)
-    elif claim_dist_sel != "-- ទាំងអស់ --":
-      rows_s = cursor.execute(
-          "SELECT DISTINCT name FROM schools WHERE district=? OR commune IN (SELECT commune FROM locations WHERE district=?)",
-          (claim_dist_sel, claim_dist_sel),
-      ).fetchall()
-      school_options = [r[0] for r in rows_s]
-    else:
-      school_options = get_all_schools()
-
+    c_cl_s = claim_comm_sel if claim_comm_sel != "-- ទាំងអស់ --" else (user_comm if not is_admin else None)
+    school_options = get_scoped_schools(p_cl_d, d_cl_c, c_cl_s, prefix_all=False)
     if not school_options:
-      school_options = get_all_schools()
+      school_options = ["គ្មានសាលា"]
 
     def_sch_idx = 0
     if st.session_state.get("claim_school_preset") in school_options:
       def_sch_idx = school_options.index(st.session_state["claim_school_preset"])
-    claim_school = st.selectbox("សាលាបឋមសិក្សា", school_options if school_options else ["គ្មានសាលា"], index=def_sch_idx, key="claim_school_sel")
+    claim_school = st.selectbox("សាលារៀន", school_options, index=def_sch_idx, key="claim_school_sel")
 
   prov_db, dist_db, comm_db, vill_db = get_school_location_info(claim_school)
-  act_district = dist_db if dist_db else (claim_dist_sel if claim_dist_sel != "-- ទាំងអស់ --" else "ស្រីស្នំ")
-  act_commune = comm_db if comm_db else (claim_comm_sel if claim_comm_sel != "-- ទាំងអស់ --" else "ស្លែងស្ពាន")
+  act_district = dist_db if dist_db else (claim_dist_sel if claim_dist_sel != "-- ទាំងអស់ --" else (user_dist or "ស្រីស្នំ"))
+  act_commune = comm_db if comm_db else (claim_comm_sel if claim_comm_sel != "-- ទាំងអស់ --" else (user_comm or "ស្លែងស្ពាន"))
 
   # ២. ជួរកាលបរិច្ឆេទចាប់ផ្ដើម និងបញ្ចប់
   today = date.today()
@@ -9038,9 +9274,16 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
     # Query purchases respecting user scope
     p_q_where = []
     p_q_params = []
-    if not is_admin and user_comm:
-      p_q_where.append("(commune = ? OR commune = '' OR commune IS NULL)")
-      p_q_params.append(user_comm)
+    if not is_admin:
+      if user_comm:
+        p_q_where.append("(commune = ? OR school_name IN (SELECT name FROM schools WHERE commune = ?))")
+        p_q_params.extend([user_comm, user_comm])
+      elif user_dist:
+        p_q_where.append("(commune IN (SELECT commune FROM locations WHERE district = ?) OR school_name IN (SELECT name FROM schools WHERE district = ?))")
+        p_q_params.extend([user_dist, user_dist])
+      elif user_prov:
+        p_q_where.append("(commune IN (SELECT commune FROM locations WHERE province = ?) OR school_name IN (SELECT name FROM schools WHERE province = ?))")
+        p_q_params.extend([user_prov, user_prov])
 
     p_sql = """
       SELECT 
@@ -9094,7 +9337,9 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
     """
 
     with sub_debt_tabs[0]:
-      df_pending = pd.read_sql_query(debt_base_sql + " WHERE status='ជំពាក់' ORDER BY id DESC", conn)
+      w_pend = list(p_q_where) + ["status='ជំពាក់'"]
+      sql_pend = debt_base_sql + " WHERE " + " AND ".join(w_pend) + " ORDER BY id DESC"
+      df_pending = pd.read_sql_query(sql_pend, conn, params=tuple(p_q_params))
       if not df_pending.empty:
         df_p_show = df_pending.copy()
         df_p_show["បំណុលជំពាក់ (៛)"] = df_p_show["បំណុលជំពាក់ (៛)"].apply(format_riel)
@@ -9104,7 +9349,9 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
         st.success("🎉 គ្មានបំណុលជំពាក់អ្នកផ្គត់ផ្គង់ទេ! បានទូទាត់រួចរាល់ទាំងអស់។")
 
     with sub_debt_tabs[1]:
-      df_paid = pd.read_sql_query(debt_base_sql + " WHERE status='ទូទាត់រួច' AND (payment_date != '' AND payment_date IS NOT NULL) ORDER BY id DESC", conn)
+      w_paid = list(p_q_where) + ["status='ទូទាត់រួច'", "(payment_date != '' AND payment_date IS NOT NULL)"]
+      sql_paid = debt_base_sql + " WHERE " + " AND ".join(w_paid) + " ORDER BY id DESC"
+      df_paid = pd.read_sql_query(sql_paid, conn, params=tuple(p_q_params))
       if not df_paid.empty:
         df_paid_show = df_paid.copy()
         df_paid_show["បំណុលជំពាក់ (៛)"] = df_paid_show["បំណុលជំពាក់ (៛)"].apply(format_riel)
@@ -9114,7 +9361,8 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
         st.info("មិនទាន់មានប្រវត្តិទូទាត់បំណុលនៅឡើយទេ។")
 
     with sub_debt_tabs[2]:
-      df_all_debts = pd.read_sql_query(debt_base_sql + " ORDER BY id DESC", conn)
+      sql_all = debt_base_sql + ((" WHERE " + " AND ".join(p_q_where)) if p_q_where else "") + " ORDER BY id DESC"
+      df_all_debts = pd.read_sql_query(sql_all, conn, params=tuple(p_q_params))
       if not df_all_debts.empty:
         df_all_show = df_all_debts.copy()
         df_all_show["បំណុលជំពាក់ (៛)"] = df_all_show["បំណុលជំពាក់ (៛)"].apply(format_riel)
@@ -9122,10 +9370,9 @@ elif menu == "🛒 បញ្ជីទិញទំនិញចូល & ជំព�
         st.dataframe(add_row_numbers(df_all_show), use_container_width=True, hide_index=True)
 
     # ----------------- ធ្វើបច្ចុប្បន្នភាពការទូទាត់បំណុល -----------------
-    if not is_admin and user_comm:
-      cursor.execute("SELECT id, supplier_name, item_name, total_price, category, commune, school_name FROM purchases WHERE status='ជំពាក់' AND (commune=? OR commune='' OR commune IS NULL) ORDER BY id ASC", (user_comm,))
-    else:
-      cursor.execute("SELECT id, supplier_name, item_name, total_price, category, commune, school_name FROM purchases WHERE status='ជំពាក់' ORDER BY id ASC")
+    act_debts_w = list(p_q_where) + ["status='ជំពាក់'"]
+    sql_act_debts = "SELECT id, supplier_name, item_name, total_price, category, commune, school_name FROM purchases WHERE " + " AND ".join(act_debts_w) + " ORDER BY id ASC"
+    cursor.execute(sql_act_debts, tuple(p_q_params))
     active_debts = cursor.fetchall()
 
     if active_debts:
@@ -9272,12 +9519,11 @@ elif menu == "💰 ចំណូល និងចំណាយ":
     with sr_r1_c2:
       filter_type = st.selectbox("🏷️ ប្រភេទប្រតិបត្តិការ", ["-- ទាំងអស់ --", "ចំណូល", "ចំណាយ"], key="sr_type")
     with sr_r1_c3:
-      # Fetch all distinct categories
       cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' ORDER BY category")
       existing_cats = [r[0] for r in cursor.fetchall()]
       filter_cat = st.selectbox("📂 តាមផ្នែក / ប្រភេទទូទៅ", ["-- ទាំងអស់ --"] + existing_cats, key="sr_cat")
 
-    sr_r2_c1, sr_r2_c2, sr_r2_c3 = st.columns([1, 1, 1.5])
+    sr_r2_c1, sr_r2_c2 = st.columns([1, 1])
     cur_y = date.today().year
     y_opts = ["-- ទាំងអស់ --", str(cur_y), str(cur_y - 1), str(cur_y - 2), str(cur_y + 1)]
     with sr_r2_c1:
@@ -9302,16 +9548,46 @@ elif menu == "💰 ចំណូល និងចំណាយ":
       filter_month_lbl = st.selectbox("🗓️ ជ្រើសរើសខែ", list(m_dict.keys()), index=0, key="sr_month")
       filter_month = m_dict[filter_month_lbl]
 
-    with sr_r2_c3:
-      if is_admin:
-        filter_comm = st.selectbox("🏛️ ឃុំ/សង្កាត់", ["-- ទាំងអស់ --"] + get_communes(), key="sr_comm")
-      else:
-        filter_comm = user_comm
-        st.text_input("🏛️ ឃុំ/សង្កាត់", value=filter_comm or "ឃុំរបស់អ្នក", disabled=True)
+    st.markdown("###### 📍 តម្រងតាមដែនសមត្ថកិច្ច (Cascading Location Filter)")
+    sr_loc1, sr_loc2, sr_loc3 = st.columns(3)
+    p_choices = get_scoped_location_choices(prefix_all=True)
+    with sr_loc1:
+      sel_tr_p = st.selectbox("១. ខេត្ត/រាជធានី", p_choices, key="sr_tr_p")
+    
+    d_choices = get_scoped_district_choices(chosen_prov=sel_tr_p if sel_tr_p != "-- ទាំងអស់ --" else None, prefix_all=True)
+    with sr_loc2:
+      sel_tr_d = st.selectbox("២. ស្រុក/ខណ្ឌ", d_choices, key="sr_tr_d")
+    
+    c_choices = get_scoped_commune_choices(chosen_prov=sel_tr_p if sel_tr_p != "-- ទាំងអស់ --" else None, chosen_dist=sel_tr_d if sel_tr_d != "-- ទាំងអស់ --" else None, prefix_all=True)
+    with sr_loc3:
+      sel_tr_c = st.selectbox("៣. ឃុំ/សង្កាត់", c_choices, key="sr_tr_c")
 
   # Construct SQL query for transactions
   tr_w = []
   tr_p = []
+
+  # Base user territory boundary
+  if not is_admin:
+    if user_comm:
+      tr_w.append("(commune = ? OR school_name IN (SELECT name FROM schools WHERE commune = ?))")
+      tr_p.extend([user_comm, user_comm])
+    elif user_dist:
+      tr_w.append("(commune IN (SELECT commune FROM locations WHERE district = ?) OR school_name IN (SELECT name FROM schools WHERE district = ?))")
+      tr_p.extend([user_dist, user_dist])
+    elif user_prov:
+      tr_w.append("(commune IN (SELECT commune FROM locations WHERE province = ?) OR school_name IN (SELECT name FROM schools WHERE province = ?))")
+      tr_p.extend([user_prov, user_prov])
+
+  # Selected location filters
+  if sel_tr_c and sel_tr_c != "-- ទាំងអស់ --":
+    tr_w.append("(commune = ? OR school_name IN (SELECT name FROM schools WHERE commune = ?))")
+    tr_p.extend([sel_tr_c, sel_tr_c])
+  elif sel_tr_d and sel_tr_d != "-- ទាំងអស់ --":
+    tr_w.append("(commune IN (SELECT commune FROM locations WHERE district = ?) OR school_name IN (SELECT name FROM schools WHERE district = ?))")
+    tr_p.extend([sel_tr_d, sel_tr_d])
+  elif sel_tr_p and sel_tr_p != "-- ទាំងអស់ --":
+    tr_w.append("(commune IN (SELECT commune FROM locations WHERE province = ?) OR school_name IN (SELECT name FROM schools WHERE province = ?))")
+    tr_p.extend([sel_tr_p, sel_tr_p])
 
   if filter_type != "-- ទាំងអស់ --":
     tr_w.append("type = ?")
@@ -9329,9 +9605,6 @@ elif menu == "💰 ចំណូល និងចំណាយ":
   if filter_month:
     tr_w.append("strftime('%m', date) = ?")
     tr_p.append(filter_month)
-  if filter_comm and filter_comm != "-- ទាំងអស់ --":
-    tr_w.append("(commune = ? OR commune = '' OR commune IS NULL)")
-    tr_p.append(filter_comm)
 
   tr_w_clause = (" WHERE " + " AND ".join(tr_w)) if tr_w else ""
 
@@ -9365,11 +9638,18 @@ elif menu == "💰 ចំណូល និងចំណាយ":
       t_amt = st.number_input("ចំនួនទឹកប្រាក់ (៛) *", min_value=0, step=100, format="%d")
       t_desc = st.text_area("ពិពណ៌នាបន្ថែម", placeholder="សរសេរព័ត៌មានលម្អិត...")
 
-      if is_admin:
-        t_comm_choice = st.selectbox("ឃុំ", ["-- ទាំងអស់ --"] + get_communes(), key="t_comm_choice")
-        t_comm_val = t_comm_choice if t_comm_choice != "-- ទាំងអស់ --" else ""
+      t_c_opts = get_scoped_commune_choices(prefix_all=False)
+      if len(t_c_opts) > 1:
+        t_comm_val = st.selectbox("ឃុំ/សង្កាត់ នៃប្រតិបត្តិការ *", t_c_opts, key="t_comm_choice")
+      elif len(t_c_opts) == 1:
+        t_comm_val = t_c_opts[0]
+        st.text_input("ឃុំ/សង្កាត់ នៃប្រតិបត្តិការ", value=t_comm_val, disabled=True)
       else:
-        t_comm_val = user_comm
+        t_comm_val = user_comm or ""
+
+      t_sch_opts = get_scoped_schools(chosen_comm=t_comm_val, prefix_all=True, all_label="-- មិនបញ្ជាក់សាលា (ចំណាយ/ចំណូលទូទៅ) --")
+      t_sch_choice = st.selectbox("សាលារៀន (បើមាន)", t_sch_opts, key="t_sch_choice")
+      t_sch_val = t_sch_choice if t_sch_choice != "-- មិនបញ្ជាក់សាលា (ចំណាយ/ចំណូលទូទៅ) --" else ""
 
       if st.form_submit_button("💾 កត់ត្រាប្រតិបត្តិការ", use_container_width=True):
         if t_amt <= 0:
@@ -9377,10 +9657,10 @@ elif menu == "💰 ចំណូល និងចំណាយ":
         else:
           cursor.execute(
               """
-              INSERT INTO transactions (date, type, category, amount, description, commune, operator_name)
-              VALUES (?,?,?,?,?,?,?)
+              INSERT INTO transactions (date, type, category, amount, description, commune, school_name, operator_name)
+              VALUES (?,?,?,?,?,?,?,?)
               """,
-              (str(t_date), t_type, t_cat.strip() if t_cat else "ទូទៅ", t_amt, t_desc.strip(), t_comm_val, t_operator.strip()),
+              (str(t_date), t_type, t_cat.strip() if t_cat else "ទូទៅ", t_amt, t_desc.strip(), t_comm_val, t_sch_val, t_operator.strip()),
           )
           conn.commit()
           st.success(f"🎉 បានកត់ត្រាប្រតិបត្តិការរួចរាល់! (អ្នកធ្វើប្រតិបត្តិការ: **{t_operator.strip()}**)")
@@ -9394,6 +9674,8 @@ elif menu == "💰 ចំណូល និងចំណាយ":
         type as [ប្រភេទ], 
         category as [ផ្នែក/ប្រភេទទូទៅ], 
         amount as [ចំនួនទឹកប្រាក់ (៛)], 
+        COALESCE(NULLIF(commune, ''), '-') as [ឃុំ/សង្កាត់],
+        COALESCE(NULLIF(school_name, ''), '-') as [សាលារៀន],
         COALESCE(NULLIF(operator_name, ''), '-') as [អ្នកធ្វើប្រតិបត្តិការ],
         description as [ពិពណ៌នា] 
       FROM transactions 
@@ -9455,42 +9737,46 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
   else:
     col_u_top1, col_u_top2 = st.columns([3, 2])
     with col_u_top1:
-      st.info("💡 គណនីរដ្ឋបាលឃុំ និងសាលាទាំងអស់ ត្រូវបានរៀបចំតាមលេខកូដ និងឈ្មោះស្តង់ដារក្រសួងអប់រំ (MoEYS) ដោយមានពាក្យសម្ងាត់រួម `<user123456789>`។")
+      st.info("💡 គណនីប្រើប្រាស់ប្រព័ន្ធ MoEYS បែងចែកជា ៣ ថ្នាក់៖ មន្ទីរអប់រំខេត្ត (២៥ គណនី), ការិយាល័យអប់រំស្រុក (២១០ គណនី), និងរដ្ឋបាលឃុំ/សង្កាត់ (១,៦៥២ គណនី) ដោយមានពាក្យសម្ងាត់រួម `<user123456789>`។")
     with col_u_top2:
       if st.button("🔄 ធ្វើសមកាលកម្មគណនីក្រសួងអប់រំ (Sync MoEYS Accounts)", use_container_width=True, key="btn_sync_moeys_u"):
         sync_moeys_locations_and_users()
         st.success("✅ បានធ្វើសមកាលកម្មគណនីឃុំ និងសាលារៀនជោគជ័យ!")
         st.rerun()
 
-    cursor.execute("SELECT id, username, full_name, role, commune, school_name, location_code FROM users ORDER BY id ASC")
+    cursor.execute("SELECT id, username, full_name, role, commune, district, province, school_name, location_code FROM users ORDER BY id ASC")
     all_users = cursor.fetchall()
 
     total_u = len(all_users)
     total_adm = sum(1 for u in all_users if str(u[3]).strip().lower() == "admin")
-    total_stf = total_u - total_adm
+    total_prov = sum(1 for u in all_users if str(u[3]).strip().lower() != "admin" and len(str(u[1]).strip()) == 2)
+    total_dist = sum(1 for u in all_users if str(u[3]).strip().lower() != "admin" and len(str(u[1]).strip()) == 4)
+    total_comm = sum(1 for u in all_users if str(u[3]).strip().lower() != "admin" and len(str(u[1]).strip()) == 6)
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     with m1:
-      st.metric("👥 គណនីសរុប", f"{total_u} នាក់")
+      st.metric("👥 គណនីសរុប", f"{total_u:,} នាក់")
     with m2:
-      st.metric("🛡️ គណនី Admin", f"{total_adm} នាក់")
+      st.metric("🛡️ Admin", f"{total_adm:,} នាក់")
     with m3:
-      st.metric("👤 គណនី User/Staff", f"{total_stf} នាក់")
+      st.metric("🏛️ មន្ទីរខេត្ត", f"{total_prov:,} នាក់")
     with m4:
-      st.metric("🔑 កំពុង Login", f"@{user_info.get('username')}")
+      st.metric("🏢 ការិយាល័យស្រុក", f"{total_dist:,} នាក់")
+    with m5:
+      st.metric("🏘️ រដ្ឋបាលឃុំ", f"{total_comm:,} នាក់")
 
     st.markdown("---")
 
     tab_manage, tab_create = st.tabs([
-        "📋 បញ្ជីគណនី & ប្រតិបត្តិការ (ពិនិត្យ / កែប្រែ / លុប)",
+        "📋 បញ្ជីគណនី & ប្រតិបត្តិការ (កែប្រែ ✏️ / លុប 🗑️)",
         "➕ បង្កើតគណនីថ្មី (Create New User)"
     ])
 
     with tab_manage:
-      st.subheader("📋 បញ្ជីគណនីអ្នកប្រើប្រាស់ និងសាលារៀនក្នុងប្រព័ន្ធ")
+      st.subheader("📋 បញ្ជីគណនីអ្នកប្រើប្រាស់ និងរដ្ឋបាលក្នុងប្រព័ន្ធ")
 
       st.markdown("##### 🔍 តម្រងស្វែងរកគណនីអ្នកប្រើប្រាស់ (Cascading Filter: ខេត្ត ➔ ស្រុក ➔ ឃុំ)")
-      f_up, f_ud, f_uc, f_ur, f_uq = st.columns([1.5, 1.5, 1.5, 1.2, 2.3])
+      f_up, f_ud, f_uc, f_ur, f_uq = st.columns([1.5, 1.5, 1.5, 1.5, 2.0])
       
       prov_list_u = ["-- ទាំងអស់ --"] + get_provinces()
       with f_up:
@@ -9505,7 +9791,7 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
         sel_u_c = st.selectbox("៣. ឃុំ/សង្កាត់", comm_list_u, key="f_user_c")
       
       with f_ur:
-        sel_u_r = st.selectbox("៤. តួនាទី", ["-- ទាំងអស់ --", "Admin", "User"], key="f_user_r")
+        sel_u_r = st.selectbox("៤. កម្រិត / តួនាទី", ["-- ទាំងអស់ --", "Admin", "មន្ទីរខេត្ត (២៥)", "ការិយាល័យស្រុក (២១០)", "រដ្ឋបាលឃុំ (១,៦៥២)"], key="f_user_r")
 
       with f_uq:
         q_u_val = st.text_input("៥. 🔍 ស្វែងរក (Username, Code, ឈ្មោះ)", key="f_user_q").strip().lower()
@@ -9525,9 +9811,15 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
       if sel_u_c != "-- ទាំងអស់ --":
         q_sql_u += " AND (commune = ? OR (commune = '' AND role = 'Admin'))"
         p_u.append(sel_u_c)
-      if sel_u_r != "-- ទាំងអស់ --":
-        q_sql_u += " AND role = ?"
-        p_u.append(sel_u_r)
+      if sel_u_r == "Admin":
+        q_sql_u += " AND role = 'Admin'"
+      elif sel_u_r == "មន្ទីរខេត្ត (២៥)":
+        q_sql_u += " AND role != 'Admin' AND LENGTH(username) = 2"
+      elif sel_u_r == "ការិយាល័យស្រុក (២១០)":
+        q_sql_u += " AND role != 'Admin' AND LENGTH(username) = 4"
+      elif sel_u_r == "រដ្ឋបាលឃុំ (១,៦៥២)":
+        q_sql_u += " AND role != 'Admin' AND LENGTH(username) = 6"
+
       if q_u_val:
         q_sql_u += " AND (LOWER(username) LIKE ? OR LOWER(full_name) LIKE ? OR location_code LIKE ? OR LOWER(school_name) LIKE ?)"
         p_u.extend([f"%{q_u_val}%"] * 4)
@@ -9542,24 +9834,36 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
       with col_cnt_u:
         st.markdown(f"👥 **លទ្ធផល:** រកឃើញគណនីចំនួន **{total_found_u:,}** ក្នុងចំណោមសរុប **{total_u:,}** នាក់")
 
+      def get_user_tier(u_name, u_role):
+        if str(u_role).strip().lower() == "admin":
+          return "🛡️ Admin"
+        u_len = len(str(u_name).strip())
+        if u_len == 2:
+          return "🏛️ មន្ទីរខេត្ត"
+        elif u_len == 4:
+          return "🏢 ការិយាល័យស្រុក"
+        elif u_len == 6:
+          return "🏘️ រដ្ឋបាលឃុំ"
+        return "👤 User"
+
       if filtered_users:
         df_u_export = pd.DataFrame([{
             "ឈ្មោះគណនី (Username)": u[1],
             "ឈ្មោះពេញ / អង្គភាព": u[2],
+            "កម្រិត": get_user_tier(u[1], u[3]),
             "លេខកូដ (Code)": u[8] or u[1],
-            "ឃុំ/សង្កាត់": u[4] or "(ទូទាំងប្រព័ន្ធ)",
-            "ស្រុក/ខណ្ឌ": u[5] or "",
             "ខេត្ត/ក្រុង": u[6] or "",
+            "ស្រុក/ខណ្ឌ": u[5] or "",
+            "ឃុំ/សង្កាត់": u[4] or "(ទូទាំងប្រព័ន្ធ)",
             "សាលារៀន": u[7] or "(គ្រប់សាលាក្នុងឃុំ)",
             "តួនាទី": u[3],
-            "ស្ថានភាពសិទ្ធិ": "🛡️ Admin (ពេញលេញ)" if str(u[3]).strip().lower() == "admin" else "👤 User (តាមឃុំ/សាលា)"
         } for u in filtered_users])
 
         with col_btn_ux:
           excel_u_bytes = generate_styled_excel(
               df_u_export,
               title="បញ្ជីគណនីអ្នកប្រើប្រាស់ប្រព័ន្ធ MoEYS",
-              subtitle=f"ខេត្ត: {sel_u_p} | ស្រុក: {sel_u_d} | ឃុំ: {sel_u_c} | តួនាទី: {sel_u_r} | សរុប: {total_found_u:,} នាក់"
+              subtitle=f"ខេត្ត: {sel_u_p} | ស្រុក: {sel_u_d} | ឃុំ: {sel_u_c} | កម្រិត: {sel_u_r} | សរុប: {total_found_u:,} នាក់"
           )
           st.download_button(
               "📥 ទាញចេញជា Excel (.xlsx)",
@@ -9603,10 +9907,9 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
         st.info("ℹ️ មិនមានគណនីត្រូវនឹងលក្ខខណ្ឌស្វែងរកនេះទេ។")
 
       st.markdown("---")
-      st.subheader("⚙️ ជ្រើសរើសគណនីសម្រាប់ប្រតិបត្តិការ (ពិនិត្យ 👁️ / កែប្រែ ✏️ / លុប 🗑️)")
+      st.markdown("### ⚙️ ប្រតិបត្តិការលើគណនី (ជ្រើសរើសដើម្បី «កែប្រែ ✏️» ឬ «លុប 🗑️»)")
 
-      # Use filtered users (capped at 200) for fast selectbox responsiveness
-      selectable_users = filtered_users[:200]
+      selectable_users = filtered_users[:300]
       user_dict = {u[0]: u for u in selectable_users}
       user_ids = [u[0] for u in selectable_users]
 
@@ -9614,14 +9917,14 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
         u = user_dict.get(uid)
         if not u:
           return str(uid)
-        tag = "🛡️ Admin" if str(u[3]).strip().lower() == "admin" else "👤 User"
-        curr = " (គណនីបច្ចុប្បន្នរបស់អ្នក)" if u[1] == user_info.get("username") else ""
-        loc = f" [{u[4]}]" if u[4] else ""
-        return f"{tag} | @{u[1]} — {u[2]}{loc}{curr}"
+        tier = get_user_tier(u[1], u[3])
+        curr = " 👈 (គណនីបច្ចុប្បន្នរបស់អ្នក)" if u[1] == user_info.get("username") else ""
+        loc = f" [{u[4] or u[5] or u[6] or 'ទូទាំងប្រព័ន្ធ'}]"
+        return f"{tier} | @{u[1]} — {u[2]}{loc}{curr}"
 
       if user_ids:
         selected_user_id = st.selectbox(
-            "🎯 សូមជ្រើសរើសគណនីគោលដៅ (ពីបញ្ជីដែលបានតម្រងខាងលើ)៖",
+            "🎯 ជ្រើសរើសគណនីដែលត្រូវដំណើរការប្រតិបត្តិការ៖",
             options=user_ids,
             format_func=format_user_label,
             key="sel_target_user"
@@ -9631,70 +9934,56 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
 
       if selected_user_id and selected_user_id in user_dict:
         target_user = user_dict[selected_user_id]
-        t_id, t_username, t_fullname, t_role, t_commune, t_school, t_loc_code = target_user
+        t_id, t_username, t_fullname, t_role, t_commune, t_district, t_province, t_school, t_loc_code = target_user
         is_current_login = (t_username == user_info.get("username"))
         target_is_admin = (str(t_role).strip().lower() == "admin")
 
-        act_tab_view, act_tab_edit, act_tab_del = st.tabs([
-            "👁️ ១. ពិនិត្យព័ត៌មានគណនី (View Details)",
-            "✏️ ២. កែប្រែព័ត៌មាន (Edit User)",
-            "🗑️ ៣. លុបគណនី (Delete User)"
-        ])
+        # Two prominent action buttons
+        st.markdown(f"##### 🛠️ ជ្រើសរើសសកម្មភាពសម្រាប់គណនី: **`@{t_username}`** ({t_fullname})")
+        btn_c1, btn_c2, btn_c3 = st.columns([1.5, 1.5, 3])
+        if "admin_user_action_tab" not in st.session_state:
+          st.session_state["admin_user_action_tab"] = "edit"
 
-        with act_tab_view:
-          st.markdown(f"#### 🔍 ព័ត៌មានលម្អិតនៃគណនី: `@{t_username}`")
-          with st.container(border=True):
-            vcol1, vcol2 = st.columns(2)
-            with vcol1:
-              st.markdown(f"**លេខសម្គាល់គណនី (User ID):** `#{t_id}`")
-              st.markdown(f"**ឈ្មោះគណនី (Username):** `{t_username}`")
-              st.markdown(f"**ឈ្មោះពេញ / អង្គភាព:** **{t_fullname or 'គ្មាន'}**")
-              st.markdown(f"**លេខកូដទីតាំង (MoEYS Code):** `{t_loc_code or t_username}`")
-            with vcol2:
-              role_badge = "🛡️ **Admin** (សិទ្ធិអ្នកគ្រប់គ្រងប្រព័ន្ធ)" if target_is_admin else "👤 **User** (សិទ្ធិតាមឃុំ/សាលា)"
-              st.markdown(f"**តួនាទីក្នុងប្រព័ន្ធ (Role):** {role_badge}")
-              st.markdown(f"**ឃុំ/សង្កាត់:** **{t_commune or 'ទូទាំងប្រព័ន្ធ'}**")
-              st.markdown(f"**សាលារៀន:** **{t_school or 'គ្រប់សាលាក្នុងឃុំ'}**")
-              st.markdown(f"**ប្រព័ន្ធសុវត្ថិភាពពាក្យសម្ងាត់:** `🔒 SHA-256 Encrypted Hash`")
+        with btn_c1:
+          if st.button("✏️ កែប្រែគណនី (Edit)", use_container_width=True, type="primary" if st.session_state["admin_user_action_tab"] == "edit" else "secondary", key="btn_act_edit_u"):
+            st.session_state["admin_user_action_tab"] = "edit"
+        with btn_c2:
+          if st.button("🗑️ លុបគណនី (Delete)", use_container_width=True, type="primary" if st.session_state["admin_user_action_tab"] == "del" else "secondary", key="btn_act_del_u"):
+            st.session_state["admin_user_action_tab"] = "del"
+        with btn_c3:
+          if st.button("👁️ ពិនិត្យព័ត៌មាន (View Details)", use_container_width=True, type="primary" if st.session_state["admin_user_action_tab"] == "view" else "secondary", key="btn_act_view_u"):
+            st.session_state["admin_user_action_tab"] = "view"
 
-            st.markdown("---")
-            st.markdown("**🔑 សិទ្ធិប្រើប្រាស់លើប្រព័ន្ធ (System Permissions):**")
-            if target_is_admin:
-              st.info(
-                  "🛡️ **កម្រិត Admin ទទួលបានសិទ្ធិពេញលេញលើប្រព័ន្ធទាំងមូល រួមមាន៖**\n"
-                  "- មើលឃើញ កែប្រែ លុប ទិន្នន័យទាំងអស់គ្រប់ផ្នែកក្នុងប្រព័ន្ធ ដោយបង្ហាញជាសរុប និងចម្រាញ់តាមស្រុក ឃុំ សាលា\n"
-                  "- បង្កើត, កែប្រែ, និងលុបគណនីអ្នកប្រើប្រាស់\n"
-                  "- កំណត់ថ្លៃទំនិញគោល Benchmark Matrix\n"
-                  "- គ្រប់គ្រងអ្នកផ្គត់ផ្គង់ និងការវាយតម្លៃផ្គត់ផ្គង់"
-              )
-            else:
-              st.success(
-                  f"👤 **កម្រិត User ត្រូវបានកំណត់ឱ្យមើលឃើញទិន្នន័យត្រឹមដែនសមត្ថកិច្ចរៀងខ្លួន៖**\n"
-                  f"- អាចមើល និងកត់ត្រាបានតែតាមឃុំ **{t_commune or 'ដែលបានកំណត់'}** និងសាលារៀន **{t_school or 'ក្នុងឃុំ'}**\n"
-                  f"- ចាប់ Username Login សម្គាល់តាមឃុំ ស្រុក និងសាលារៀងខ្លួន\n"
-                  f"- ពាក្យសម្ងាត់លំនាំដើម: `<user123456789>`"
-              )
+        curr_action = st.session_state.get("admin_user_action_tab", "edit")
 
-        with act_tab_edit:
-          st.markdown(f"#### ✏️ កែប្រែព័ត៌មានគណនី: `@{t_username}`")
+        if curr_action == "edit":
+          st.markdown(f"#### ✏️ ទម្រង់កែប្រែព័ត៌មានគណនី: `@{t_username}`")
           with st.form(f"form_edit_user_{t_id}"):
             c_e1, c_e2 = st.columns(2)
             with c_e1:
               st.text_input("ឈ្មោះគណនី (Username - មិនអាចកែប្រែបាន)", value=t_username, disabled=True)
-              edit_fn = st.text_input("ឈ្មោះពេញ / អង្គភាព", value=t_fullname or "")
-              edit_role = st.selectbox("តួនាទី (Role)", options=["User", "Admin"], index=1 if target_is_admin else 0)
+              edit_fn = st.text_input("ឈ្មោះពេញ / អង្គភាព *", value=t_fullname or "")
+              edit_role = st.selectbox("តួនាទី (Role) *", options=["User", "Admin"], index=1 if target_is_admin else 0)
               edit_code = st.text_input("លេខកូដទីតាំង (MoEYS Code)", value=t_loc_code or t_username)
             with c_e2:
-              comm_opts = [""] + get_communes()
-              cur_c_idx = comm_opts.index(t_commune) if t_commune in comm_opts else 0
-              edit_comm = st.selectbox("ឃុំ/សង្កាត់", options=comm_opts, index=cur_c_idx, key=f"e_comm_{t_id}")
+              all_p = [""] + get_provinces()
+              cur_p_idx = all_p.index(t_province) if t_province in all_p else 0
+              edit_prov = st.selectbox("ខេត្ត/រាជធានី", options=all_p, index=cur_p_idx, key=f"e_prov_{t_id}")
+
+              all_d = [""] + (get_districts(edit_prov) if edit_prov else get_districts())
+              cur_d_idx = all_d.index(t_district) if t_district in all_d else 0
+              edit_dist = st.selectbox("ស្រុក/ខណ្ឌ", options=all_d, index=cur_d_idx, key=f"e_dist_{t_id}")
+
+              all_c = [""] + (get_communes(edit_prov if edit_prov else None, edit_dist if edit_dist else None))
+              cur_c_idx = all_c.index(t_commune) if t_commune in all_c else 0
+              edit_comm = st.selectbox("ឃុំ/សង្កាត់", options=all_c, index=cur_c_idx, key=f"e_comm_{t_id}")
               edit_sch = st.text_input("សាលារៀន (ទុកទទេបើគ្រប់គ្រងគ្រប់សាលាក្នុងឃុំ)", value=t_school or "")
 
-            st.caption("🔑 **ប្តូរពាក្យសម្ងាត់ថ្មី (ប្រសិនបើមិនចង់ប្តូរ សូមទុកប្រអប់ខាងក្រោមទទេ | ពាក្យសម្ងាត់លំនាំដើម: user123456789)**")
+            st.caption("🔑 **ប្តូរពាក្យសម្ងាត់ថ្មី (ប្រសិនបើមិនចង់ប្តូរ សូមទុកប្រអប់ខាងក្រោមទទេ | ពាក្យសម្ងាត់លំនាំដើម User: user123456789)**")
             edit_pwd = st.text_input("ពាក្យសម្ងាត់ថ្មី (New Password)", type="password", key=f"edit_pwd_{t_id}")
             edit_pwd_confirm = st.text_input("ផ្ទៀងផ្ទាត់ពាក្យសម្ងាត់ថ្មី (Confirm New Password)", type="password", key=f"edit_pwd_c_{t_id}")
 
-            submitted_edit = st.form_submit_button("💾 រក្សាទុកការកែប្រែ (Save Changes)", use_container_width=True)
+            submitted_edit = st.form_submit_button("💾 រក្សាទុកការកែប្រែគណនី (Save Changes)", use_container_width=True, type="primary")
             if submitted_edit:
               if target_is_admin and edit_role != "Admin" and total_adm <= 1:
                 st.error("⚠️ មិនអាចប្តូរតួនាទីគណនីនេះទៅជា User បានទេ ព្រោះប្រព័ន្ធត្រូវមាន Admin យ៉ាងហោចណាស់ម្នាក់!")
@@ -9705,19 +9994,21 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
                   if edit_pwd:
                     hp = hash_password(edit_pwd)
                     cursor.execute(
-                        "UPDATE users SET full_name=?, role=?, password=?, commune=?, school_name=?, location_code=? WHERE id=?",
-                        (edit_fn.strip(), edit_role, hp, edit_comm, edit_sch.strip(), edit_code.strip(), t_id)
+                        "UPDATE users SET full_name=?, role=?, password=?, commune=?, district=?, province=?, school_name=?, location_code=? WHERE id=?",
+                        (edit_fn.strip(), edit_role, hp, edit_comm, edit_dist, edit_prov, edit_sch.strip(), edit_code.strip(), t_id)
                     )
                   else:
                     cursor.execute(
-                        "UPDATE users SET full_name=?, role=?, commune=?, school_name=?, location_code=? WHERE id=?",
-                        (edit_fn.strip(), edit_role, edit_comm, edit_sch.strip(), edit_code.strip(), t_id)
+                        "UPDATE users SET full_name=?, role=?, commune=?, district=?, province=?, school_name=?, location_code=? WHERE id=?",
+                        (edit_fn.strip(), edit_role, edit_comm, edit_dist, edit_prov, edit_sch.strip(), edit_code.strip(), t_id)
                     )
                   conn.commit()
 
                   if is_current_login:
                     st.session_state["user_info"]["name"] = edit_fn.strip()
                     st.session_state["user_info"]["role"] = edit_role
+                    st.session_state["user_info"]["province"] = edit_prov
+                    st.session_state["user_info"]["district"] = edit_dist
                     st.session_state["user_info"]["commune"] = edit_comm
                     st.session_state["user_info"]["school_name"] = edit_sch.strip()
 
@@ -9726,51 +10017,93 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
                 except Exception as e:
                   st.error(f"❌ មានបញ្ហាក្នុងការកែប្រែ៖ {e}")
 
-        with act_tab_del:
+        elif curr_action == "del":
           st.markdown(f"#### 🗑️ លុបគណនីអ្នកប្រើប្រាស់: `@{t_username}`")
+          with st.container(border=True):
+            if is_current_login:
+              st.warning("⚠️ **មិនអាចលុបគណនីបានទេ៖** នេះជាគណនីដែលលោកអ្នកកំពុង Login ប្រើប្រាស់បច្ចុប្បន្ន!")
+            elif target_is_admin and total_adm <= 1:
+              st.error("⚠️ **មិនអាចលុបគណនីបានទេ៖** គណនីនេះជា Admin តែមួយគត់ក្នុងប្រព័ន្ធ។ ប្រព័ន្ធត្រូវតែមាន Admin យ៉ាងហោចណាស់ម្នាក់ជានិច្ច!")
+            else:
+              st.error(f"⚠️ **ការព្រមានសុវត្ថិភាព:** សកម្មភាពនេះនឹងលុបគណនី `@{t_username}` ({t_fullname}) ចេញពីប្រព័ន្ធជាអចិន្ត្រៃយ៍ និងមិនអាចទាញយកមកវិញបានឡើយ!")
+              confirm_del = st.checkbox(
+                  f"ខ្ញុំយល់ព្រម និងបញ្ជាក់ការលុបគណនី @{t_username} ចេញពីប្រព័ន្ធជាអចិន្ត្រៃយ៍",
+                  key=f"chk_del_{t_id}"
+              )
+              btn_del = st.button(
+                  f"🗑️ បញ្ជាក់ការលុបគណនី @{t_username} ឥឡូវនេះ",
+                  type="primary",
+                  disabled=not confirm_del,
+                  key=f"btn_confirm_del_{t_id}",
+                  use_container_width=True
+              )
+              if btn_del:
+                try:
+                  cursor.execute("DELETE FROM users WHERE id=?", (t_id,))
+                  conn.commit()
+                  st.success(f"🗑️ បានលុបគណនី `@{t_username}` ចេញពីប្រព័ន្ធដោយជោគជ័យ!")
+                  st.rerun()
+                except Exception as e:
+                  st.error(f"❌ មានបញ្ហាក្នុងការលុប៖ {e}")
 
-          if is_current_login:
-            st.warning("⚠️ **មិនអាចលុបគណនីបានទេ៖** នេះជាគណនីដែលលោកអ្នកកំពុង Login ប្រើប្រាស់បច្ចុប្បន្ន!")
-          elif target_is_admin and total_adm <= 1:
-            st.error("⚠️ **មិនអាចលុបគណនីបានទេ៖** គណនីនេះជា Admin តែមួយគត់ក្នុងប្រព័ន្ធ។ ប្រព័ន្ធត្រូវតែមាន Admin យ៉ាងហោចណាស់ម្នាក់ជានិច្ច!")
-          else:
-            st.error(f"⚠️ **ការព្រមាន៖** សកម្មភាពនេះនឹងលុបគណនី `@{t_username}` ({t_fullname}) ចេញពីប្រព័ន្ធជាអចិន្ត្រៃយ៍ និងមិនអាចទាញយកមកវិញបានឡើយ!")
-            confirm_del = st.checkbox(
-                f"ខ្ញុំយល់ព្រម និងបញ្ជាក់ការលុបគណនី @{t_username} ចេញពីប្រព័ន្ធ",
-                key=f"chk_del_{t_id}"
-            )
-            btn_del = st.button(
-                f"🗑️ បញ្ជាក់ការលុបគណនី @{t_username}",
-                type="primary",
-                disabled=not confirm_del,
-                key=f"btn_confirm_del_{t_id}"
-            )
-            if btn_del:
-              try:
-                cursor.execute("DELETE FROM users WHERE id=?", (t_id,))
-                conn.commit()
-                st.success(f"🗑️ បានលុបគណនី `@{t_username}` ចេញពីប្រព័ន្ធដោយជោគជ័យ!")
-                st.rerun()
-              except Exception as e:
-                st.error(f"❌ មានបញ្ហាក្នុងការលុប៖ {e}")
+        else: # view
+          st.markdown(f"#### 🔍 ព័ត៌មានលម្អិតនៃគណនី: `@{t_username}`")
+          with st.container(border=True):
+            vcol1, vcol2 = st.columns(2)
+            with vcol1:
+              st.markdown(f"**លេខសម្គាល់គណនី (User ID):** `#{t_id}`")
+              st.markdown(f"**ឈ្មោះគណនី (Username):** `{t_username}`")
+              st.markdown(f"**ឈ្មោះពេញ / អង្គភាព:** **{t_fullname or 'គ្មាន'}**")
+              st.markdown(f"**លេខកូដទីតាំង (MoEYS Code):** `{t_loc_code or t_username}`")
+              st.markdown(f"**កម្រិតគណនី:** **{get_user_tier(t_username, t_role)}**")
+            with vcol2:
+              role_badge = "🛡️ **Admin** (សិទ្ធិអ្នកគ្រប់គ្រងប្រព័ន្ធ)" if target_is_admin else "👤 **User** (សិទ្ធិតាមដែនសមត្ថកិច្ច)"
+              st.markdown(f"**តួនាទីក្នុងប្រព័ន្ធ (Role):** {role_badge}")
+              st.markdown(f"**ខេត្ត/រាជធានី:** **{t_province or 'ទូទាំងប្រព័ន្ធ'}**")
+              st.markdown(f"**ស្រុក/ខណ្ឌ:** **{t_district or 'ទូទាំងខេត្ត'}**")
+              st.markdown(f"**ឃុំ/សង្កាត់:** **{t_commune or 'ទូទាំងស្រុក'}**")
+              st.markdown(f"**សាលារៀន:** **{t_school or 'គ្រប់សាលាក្នុងឃុំ'}**")
 
     with tab_create:
       st.subheader("➕ បង្កើតគណនីអ្នកប្រើប្រាស់ថ្មី")
+      
+      tier_choice = st.selectbox(
+          "១. ជ្រើសរើសកម្រិតថ្នាក់នៃគណនី (Account Tier) *",
+          [
+              "🏘️ គណនីរដ្ឋបាលឃុំ/សង្កាត់ (Commune Account)",
+              "🏢 គណនីការិយាល័យអប់រំស្រុក (District Account)",
+              "🏛️ គណនីមន្ទីរអប់រំខេត្ត (Provincial Account)",
+              "🛡️ គណនីអ្នកគ្រប់គ្រងទូទៅ (Admin Account)"
+          ],
+          key="c_u_tier"
+      )
+
       with st.form("new_user_form_v2"):
         c1, c2 = st.columns(2)
         with c1:
-          new_u = st.text_input("ឈ្មោះគណនី ឬលេខកូដ (Username / Code) *", placeholder="ឧ. 17120609, user_slaeng")
-          new_fn = st.text_input("ឈ្មោះពេញ ឬឈ្មោះអង្គភាព (Full Name) *", placeholder="ឧ. សាលាបឋមសិក្សាថ្មី, សុខ សំណាង")
-          new_r = st.selectbox("តួនាទី (Role) *", ["User", "Admin"], index=0)
-          new_code = st.text_input("លេខកូដទីតាំង (MoEYS Code)", placeholder="ឧ. 17120609")
-        with c2:
-          new_comm = st.selectbox("ឃុំ/សង្កាត់", [""] + get_communes(), key="new_u_comm")
-          new_sch = st.text_input("សាលារៀន (ទុកទទេបើគ្រប់គ្រងគ្រប់សាលាក្នុងឃុំ)", placeholder="ឧ. ភ្នំដី")
-          st.caption("🔑 **ពាក្យសម្ងាត់លំនាំដើមសម្រាប់ User គឺ `<user123456789>`**")
-          new_p = st.text_input("ពាក្យសម្ងាត់ (Password) *", value="user123456789", type="password")
-          new_pc = st.text_input("បញ្ជាក់ពាក្យសម្ងាត់ (Confirm Password) *", value="user123456789", type="password")
+          new_u = st.text_input("ឈ្មោះគណនី ឬលេខកូដ (Username / Code) *", placeholder="ឧ. 171206, 1712, 17, admin2")
+          new_fn = st.text_input("ឈ្មោះពេញ ឬឈ្មោះអង្គភាព (Full Name) *", placeholder="ឧ. រដ្ឋបាលឃុំស្លែងស្ពាន, ការិយាល័យអប់រំស្រុកស្រីស្នំ")
+          new_role = "Admin" if "Admin" in tier_choice else "User"
+          st.text_input("តួនាទី (Role)", value=new_role, disabled=True)
+          new_code = st.text_input("លេខកូដទីតាំង (MoEYS Code)", placeholder="ឧ. 171206")
 
-        submit_new = st.form_submit_button("➕ បង្កើតគណនីថ្មី", use_container_width=True)
+        with c2:
+          all_prov = [""] + get_provinces()
+          cr_prov = st.selectbox("ខេត្ត/រាជធានី", all_prov, key="new_u_p")
+          
+          all_dist = [""] + (get_districts(cr_prov) if cr_prov else get_districts())
+          cr_dist = st.selectbox("ស្រុក/ខណ្ឌ", all_dist, key="new_u_d")
+          
+          all_comm = [""] + (get_communes(cr_prov if cr_prov else None, cr_dist if cr_dist else None))
+          cr_comm = st.selectbox("ឃុំ/សង្កាត់", all_comm, key="new_u_c")
+          
+          cr_sch = st.text_input("សាលារៀន (បើមាន)", placeholder="ឧ. ភ្នំដី")
+
+          st.caption("🔑 **ពាក្យសម្ងាត់លំនាំដើមសម្រាប់ User គឺ `<user123456789>`**")
+          new_p = st.text_input("ពាក្យសម្ងាត់ (Password) *", value="user123456789" if new_role == "User" else "", type="password")
+          new_pc = st.text_input("បញ្ជាក់ពាក្យសម្ងាត់ (Confirm Password) *", value="user123456789" if new_role == "User" else "", type="password")
+
+        submit_new = st.form_submit_button("➕ បង្កើតគណនីថ្មី (Create Account)", use_container_width=True, type="primary")
         if submit_new:
           if not new_u or not new_p:
             st.warning("⚠️ សូមបំពេញឈ្មោះគណនី និងពាក្យសម្ងាត់!")
@@ -9783,7 +10116,7 @@ elif menu == "👥 គ្រប់គ្រងអ្នកប្រើប្រ�
                   INSERT INTO users (username, password, full_name, role, commune, district, province, school_name, location_code)
                   VALUES (?,?,?,?,?,?,?,?,?)
                   """,
-                  (new_u.strip(), hash_password(new_p), new_fn.strip(), new_r, new_comm, "ស្រីស្នំ", "សៀមរាប", new_sch.strip(), new_code.strip() or new_u.strip()),
+                  (new_u.strip(), hash_password(new_p), new_fn.strip(), new_role, cr_comm, cr_dist, cr_prov, cr_sch.strip(), new_code.strip() or new_u.strip()),
               )
               conn.commit()
               st.success(f"✅ បានបង្កើតគណនី `@{new_u.strip()}` ដោយជោគជ័យ!")
