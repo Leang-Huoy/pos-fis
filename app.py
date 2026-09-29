@@ -24,8 +24,11 @@ st.set_page_config(
     layout="wide",
 )
 
-# បង្កើត Database Connection
-conn = sqlite3.connect("school_pos.db", check_same_thread=False)
+# បង្កើត Database Connection និងកំណត់ WAL Mode + Busy Timeout ដើម្បីដំណើរការរលូន គ្មានបញ្ហា Lock
+conn = sqlite3.connect("school_pos.db", timeout=30.0, check_same_thread=False)
+conn.execute("PRAGMA journal_mode = WAL")
+conn.execute("PRAGMA synchronous = NORMAL")
+conn.execute("PRAGMA busy_timeout = 30000")
 cursor = conn.cursor()
 
 
@@ -122,8 +125,10 @@ def get_user_scope():
 # មុខងារធ្វើសមកាលកម្មលេខកូដ និងឈ្មោះរដ្ឋបាលតាមស្តង់ដារក្រសួងអប់រំ និងបង្កើតគណនីស្វ័យប្រវត្តទូទាំងប្រទេសកម្ពុជា
 def sync_moeys_locations_and_users():
   try:
+    conn.commit()
     import populate_national_moeys
     populate_national_moeys.run_migration()
+    st.cache_data.clear()
   except Exception as e:
     # Fallback to local Srei Snam sync if dataset file is unavailable
     default_user_pass = hash_password("user123456789")
@@ -159,6 +164,7 @@ def sync_moeys_locations_and_users():
             (full_name, c_name, c_code, c_code),
         )
     conn.commit()
+    st.cache_data.clear()
 
 
 
@@ -374,21 +380,20 @@ def init_db():
   # Upgrade schema schools បើខ្វះ column
   cursor.execute("PRAGMA table_info(schools)")
   existing_cols = [c[1] for c in cursor.fetchall()]
-  if "province" not in existing_cols:
-    cursor.execute("ALTER TABLE schools ADD COLUMN province TEXT")
-  if "district" not in existing_cols:
-    cursor.execute("ALTER TABLE schools ADD COLUMN district TEXT")
-  if "village" not in existing_cols:
-    cursor.execute("ALTER TABLE schools ADD COLUMN village TEXT")
+  for col in ["province", "district", "village", "school_code", "commune_code", "district_code", "province_code"]:
+    if col not in existing_cols:
+      cursor.execute(f"ALTER TABLE schools ADD COLUMN {col} TEXT DEFAULT ''")
 
-  # បំពេញ province/district សម្រាប់ទិន្នន័យចាស់ដែលមានតែ commune
-  cursor.execute("""
-    UPDATE schools 
-    SET province = (SELECT province FROM locations WHERE locations.commune = schools.commune LIMIT 1),
-        district = (SELECT district FROM locations WHERE locations.commune = schools.commune LIMIT 1),
-        village = (SELECT village FROM locations WHERE locations.commune = schools.commune LIMIT 1)
-    WHERE (province IS NULL OR province = '')
-  """)
+  # បំពេញ province/district សម្រាប់ទិន្នន័យចាស់ដែលមានតែ commune បើមានទទេ
+  has_empty_sch = cursor.execute("SELECT 1 FROM schools WHERE province IS NULL OR province = '' LIMIT 1").fetchone()
+  if has_empty_sch:
+    cursor.execute("""
+      UPDATE schools 
+      SET province = (SELECT province FROM locations WHERE locations.commune = schools.commune LIMIT 1),
+          district = (SELECT district FROM locations WHERE locations.commune = schools.commune LIMIT 1),
+          village = (SELECT village FROM locations WHERE locations.commune = schools.commune LIMIT 1)
+      WHERE (province IS NULL OR province = '')
+    """)
 
   # តារាងមុខទំនិញ (មានតម្លៃមធ្យម price_avg និងកាលបរិច្ឆេទវគ្គ១-២)
   cursor.execute("""
@@ -402,42 +407,43 @@ def init_db():
         phase1_start TEXT,
         phase1_end TEXT,
         phase2_start TEXT,
-        phase2_end TEXT
+        phase2_end TEXT,
+        category TEXT DEFAULT '',
+        province TEXT DEFAULT '',
+        district TEXT DEFAULT '',
+        school_name TEXT DEFAULT '',
+        price_level TEXT DEFAULT 'commune',
+        supplier_name TEXT DEFAULT ''
     )""")
 
   cursor.execute("PRAGMA table_info(products)")
   prod_cols = [c[1] for c in cursor.fetchall()]
-  if "price_avg" not in prod_cols:
-    cursor.execute("ALTER TABLE products ADD COLUMN price_avg REAL")
-  if "phase1_start" not in prod_cols:
-    cursor.execute("ALTER TABLE products ADD COLUMN phase1_start TEXT")
-  if "phase1_end" not in prod_cols:
-    cursor.execute("ALTER TABLE products ADD COLUMN phase1_end TEXT")
-  if "phase2_start" not in prod_cols:
-    cursor.execute("ALTER TABLE products ADD COLUMN phase2_start TEXT")
-  if "phase2_end" not in prod_cols:
-    cursor.execute("ALTER TABLE products ADD COLUMN phase2_end TEXT")
-  if "category" not in prod_cols:
-    cursor.execute("ALTER TABLE products ADD COLUMN category TEXT DEFAULT ''")
-  if "province" not in prod_cols:
-    cursor.execute("ALTER TABLE products ADD COLUMN province TEXT DEFAULT ''")
-  if "district" not in prod_cols:
-    cursor.execute("ALTER TABLE products ADD COLUMN district TEXT DEFAULT ''")
-  if "school_name" not in prod_cols:
-    cursor.execute("ALTER TABLE products ADD COLUMN school_name TEXT DEFAULT ''")
-  if "price_level" not in prod_cols:
-    cursor.execute("ALTER TABLE products ADD COLUMN price_level TEXT DEFAULT 'commune'")
-  if "supplier_name" not in prod_cols:
-    cursor.execute("ALTER TABLE products ADD COLUMN supplier_name TEXT DEFAULT ''")
+  for col, col_t in [
+      ("price_avg", "REAL"),
+      ("phase1_start", "TEXT"),
+      ("phase1_end", "TEXT"),
+      ("phase2_start", "TEXT"),
+      ("phase2_end", "TEXT"),
+      ("category", "TEXT DEFAULT ''"),
+      ("province", "TEXT DEFAULT ''"),
+      ("district", "TEXT DEFAULT ''"),
+      ("school_name", "TEXT DEFAULT ''"),
+      ("price_level", "TEXT DEFAULT 'commune'"),
+      ("supplier_name", "TEXT DEFAULT ''"),
+  ]:
+    if col not in prod_cols:
+      cursor.execute(f"ALTER TABLE products ADD COLUMN {col} {col_t}")
 
-  # Update price_level and province/district for products
-  cursor.execute("UPDATE products SET price_level='commune' WHERE price_level IS NULL OR price_level=''")
-  cursor.execute("""
-    UPDATE products 
-    SET province = (SELECT province FROM locations WHERE locations.commune = products.commune LIMIT 1),
-        district = (SELECT district FROM locations WHERE locations.commune = products.commune LIMIT 1)
-    WHERE (province IS NULL OR province = '') AND commune IS NOT NULL AND commune != ''
-  """)
+  # Update price_level and province/district for products only if needed
+  has_empty_prod_prov = cursor.execute("SELECT 1 FROM products WHERE (province IS NULL OR province = '') AND commune IS NOT NULL AND commune != '' LIMIT 1").fetchone()
+  if has_empty_prod_prov:
+    cursor.execute("UPDATE products SET price_level='commune' WHERE price_level IS NULL OR price_level=''")
+    cursor.execute("""
+      UPDATE products 
+      SET province = (SELECT province FROM locations WHERE locations.commune = products.commune LIMIT 1),
+          district = (SELECT district FROM locations WHERE locations.commune = products.commune LIMIT 1)
+      WHERE (province IS NULL OR province = '') AND commune IS NOT NULL AND commune != ''
+    """)
 
   # គណនាតម្លៃមធ្យមសម្រាប់ទិន្នន័យចាស់ដែលមិនទាន់មាន price_avg
   cursor.execute("""
@@ -458,10 +464,12 @@ def init_db():
   """)
 
   # បំពេញ category ស្វ័យប្រវត្តសម្រាប់មុខទំនិញដែលមិនទាន់មានប្រភេទសម្គាល់
-  cursor.execute("SELECT id, item_name FROM products WHERE category IS NULL OR category = ''")
-  for pid, pname in cursor.fetchall():
-    auto_cat = classify_item_category(pname)
-    cursor.execute("UPDATE products SET category=? WHERE id=?", (auto_cat, pid))
+  has_empty_cat = cursor.execute("SELECT 1 FROM products WHERE category IS NULL OR category = '' LIMIT 1").fetchone()
+  if has_empty_cat:
+    cursor.execute("SELECT id, item_name FROM products WHERE category IS NULL OR category = ''")
+    for pid, pname in cursor.fetchall():
+      auto_cat = classify_item_category(pname)
+      cursor.execute("UPDATE products SET category=? WHERE id=?", (auto_cat, pid))
 
   # តារាងកត់ត្រាប្រចាំថ្ងៃ (មានលេខសក្ខីប័ត្រ voucher_no)
   cursor.execute("""
@@ -483,21 +491,23 @@ def init_db():
     cursor.execute("ALTER TABLE daily_records ADD COLUMN voucher_no TEXT")
 
   # បំពេញលេខសក្ខីប័ត្រស្វ័យប្រវត្ត ចាប់ផ្ដើមពី 001 សម្រាប់ទិន្នន័យចាស់ដែលមិនទាន់មាន
-  schools_list = [r[0] for r in cursor.execute("SELECT DISTINCT school_name FROM daily_records WHERE school_name IS NOT NULL").fetchall()]
-  for sch in schools_list:
-    dates = [r[0] for r in cursor.execute("SELECT DISTINCT date FROM daily_records WHERE school_name=? AND (voucher_no IS NULL OR voucher_no='') ORDER BY date ASC", (sch,)).fetchall()]
-    if dates:
-      existing_v = [r[0] for r in cursor.execute("SELECT DISTINCT voucher_no FROM daily_records WHERE school_name=? AND voucher_no IS NOT NULL AND voucher_no!=''", (sch,)).fetchall()]
-      nums = []
-      for v in existing_v:
-        digits = re.findall(r'\d+', str(v))
-        if digits:
-          nums.append(int(digits[-1]))
-      cur_idx = max(nums) if nums else 0
-      for d_val in dates:
-        cur_idx += 1
-        v_str = f"{cur_idx:03d}"
-        cursor.execute("UPDATE daily_records SET voucher_no=? WHERE school_name=? AND date=? AND (voucher_no IS NULL OR voucher_no='')", (v_str, sch, d_val))
+  has_empty_v = cursor.execute("SELECT 1 FROM daily_records WHERE voucher_no IS NULL OR voucher_no='' LIMIT 1").fetchone()
+  if has_empty_v:
+    schools_list = [r[0] for r in cursor.execute("SELECT DISTINCT school_name FROM daily_records WHERE school_name IS NOT NULL").fetchall()]
+    for sch in schools_list:
+      dates = [r[0] for r in cursor.execute("SELECT DISTINCT date FROM daily_records WHERE school_name=? AND (voucher_no IS NULL OR voucher_no='') ORDER BY date ASC", (sch,)).fetchall()]
+      if dates:
+        existing_v = [r[0] for r in cursor.execute("SELECT DISTINCT voucher_no FROM daily_records WHERE school_name=? AND voucher_no IS NOT NULL AND voucher_no!=''", (sch,)).fetchall()]
+        nums = []
+        for v in existing_v:
+          digits = re.findall(r'\d+', str(v))
+          if digits:
+            nums.append(int(digits[-1]))
+        cur_idx = max(nums) if nums else 0
+        for d_val in dates:
+          cur_idx += 1
+          v_str = f"{cur_idx:03d}"
+          cursor.execute("UPDATE daily_records SET voucher_no=? WHERE school_name=? AND date=? AND (voucher_no IS NULL OR voucher_no='')", (v_str, sch, d_val))
 
   # តារាងទិញទំនិញចូល
   cursor.execute("""
@@ -509,8 +519,21 @@ def init_db():
         quantity REAL,
         total_price REAL,
         supplier_name TEXT,
-        status TEXT
+        status TEXT,
+        category TEXT DEFAULT '',
+        commune TEXT DEFAULT '',
+        school_name TEXT DEFAULT '',
+        paid_amount REAL DEFAULT 0,
+        payment_date TEXT DEFAULT '',
+        operator_name TEXT DEFAULT ''
     )""")
+
+  # Ensure columns in purchases
+  cursor.execute("PRAGMA table_info(purchases)")
+  p_cols = [c[1] for c in cursor.fetchall()]
+  for col, col_t in [('category', 'TEXT DEFAULT ""'), ('commune', 'TEXT DEFAULT ""'), ('school_name', 'TEXT DEFAULT ""'), ('paid_amount', 'REAL DEFAULT 0'), ('payment_date', 'TEXT DEFAULT ""'), ('operator_name', 'TEXT DEFAULT ""')]:
+    if col not in p_cols:
+      cursor.execute(f"ALTER TABLE purchases ADD COLUMN {col} {col_t}")
 
   # តារាងចំណូលចំណាយ
   cursor.execute("""
@@ -520,8 +543,19 @@ def init_db():
         type TEXT,
         category TEXT,
         amount REAL,
-        description TEXT
+        description TEXT,
+        commune TEXT DEFAULT '',
+        school_name TEXT DEFAULT '',
+        operator_name TEXT DEFAULT ''
     )""")
+
+  # Ensure columns in transactions
+  cursor.execute("PRAGMA table_info(transactions)")
+  tr_cols = [c[1] for c in cursor.fetchall()]
+  for col, col_t in [('commune', 'TEXT DEFAULT ""'), ('school_name', 'TEXT DEFAULT ""'), ('operator_name', 'TEXT DEFAULT ""')]:
+    if col not in tr_cols:
+      cursor.execute(f"ALTER TABLE transactions ADD COLUMN {col} {col_t}")
+
   # តារាងអ្នកផ្គត់ផ្គង់តាមសាលារៀន (School Suppliers)
   cursor.execute("""
     CREATE TABLE IF NOT EXISTS suppliers (
@@ -534,23 +568,26 @@ def init_db():
         province TEXT,
         phone TEXT,
         signature_data TEXT,
-        supplied_categories TEXT
+        supplied_categories TEXT DEFAULT '',
+        supply_level TEXT DEFAULT 'school',
+        target_commune TEXT DEFAULT '',
+        target_district TEXT DEFAULT '',
+        target_province TEXT DEFAULT '',
+        gender TEXT DEFAULT 'ប្រុស'
     )""")
 
   cursor.execute("PRAGMA table_info(suppliers)")
   sup_cols = [c[1] for c in cursor.fetchall()]
-  if "supplied_categories" not in sup_cols:
-    cursor.execute("ALTER TABLE suppliers ADD COLUMN supplied_categories TEXT DEFAULT ''")
-  if "supply_level" not in sup_cols:
-    cursor.execute("ALTER TABLE suppliers ADD COLUMN supply_level TEXT DEFAULT 'school'")
-  if "target_commune" not in sup_cols:
-    cursor.execute("ALTER TABLE suppliers ADD COLUMN target_commune TEXT DEFAULT ''")
-  if "target_district" not in sup_cols:
-    cursor.execute("ALTER TABLE suppliers ADD COLUMN target_district TEXT DEFAULT ''")
-  if "target_province" not in sup_cols:
-    cursor.execute("ALTER TABLE suppliers ADD COLUMN target_province TEXT DEFAULT ''")
-  if "gender" not in sup_cols:
-    cursor.execute("ALTER TABLE suppliers ADD COLUMN gender TEXT DEFAULT 'ប្រុស'")
+  for col, col_t in [
+      ("supplied_categories", "TEXT DEFAULT ''"),
+      ("supply_level", "TEXT DEFAULT 'school'"),
+      ("target_commune", "TEXT DEFAULT ''"),
+      ("target_district", "TEXT DEFAULT ''"),
+      ("target_province", "TEXT DEFAULT ''"),
+      ("gender", "TEXT DEFAULT 'ប្រុស'"),
+  ]:
+    if col not in sup_cols:
+      cursor.execute(f"ALTER TABLE suppliers ADD COLUMN {col} {col_t}")
 
   cursor.execute("""
     UPDATE suppliers 
@@ -582,13 +619,11 @@ def init_db():
         high_10 REAL,
         low_10 REAL,
         updated_at TEXT,
-        updated_by TEXT
+        updated_by TEXT,
+        season1_price REAL DEFAULT 0,
+        season2_price REAL DEFAULT 0,
+        avg_price REAL DEFAULT 0
     )""")
-  # Ensure seasonal and average price columns exist in benchmark_prices
-  bm_cols = [c[1] for c in cursor.execute("PRAGMA table_info(benchmark_prices)").fetchall()]
-  for col_name in ['season1_price', 'season2_price', 'avg_price']:
-    if col_name not in bm_cols:
-      cursor.execute(f"ALTER TABLE benchmark_prices ADD COLUMN {col_name} REAL DEFAULT 0")
 
   # Ensure columns in users
   cursor.execute("PRAGMA table_info(users)")
@@ -596,20 +631,6 @@ def init_db():
   for col, col_t in [('commune', 'TEXT DEFAULT ""'), ('district', 'TEXT DEFAULT ""'), ('province', 'TEXT DEFAULT ""'), ('school_name', 'TEXT DEFAULT ""'), ('location_code', 'TEXT DEFAULT ""')]:
     if col not in u_cols:
       cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {col_t}")
-
-  # Ensure columns in purchases
-  cursor.execute("PRAGMA table_info(purchases)")
-  p_cols = [c[1] for c in cursor.fetchall()]
-  for col, col_t in [('category', 'TEXT DEFAULT ""'), ('commune', 'TEXT DEFAULT ""'), ('school_name', 'TEXT DEFAULT ""'), ('paid_amount', 'REAL DEFAULT 0'), ('payment_date', 'TEXT DEFAULT ""'), ('operator_name', 'TEXT DEFAULT ""')]:
-    if col not in p_cols:
-      cursor.execute(f"ALTER TABLE purchases ADD COLUMN {col} {col_t}")
-
-  # Ensure columns in transactions
-  cursor.execute("PRAGMA table_info(transactions)")
-  tr_cols = [c[1] for c in cursor.fetchall()]
-  for col, col_t in [('commune', 'TEXT DEFAULT ""'), ('school_name', 'TEXT DEFAULT ""'), ('operator_name', 'TEXT DEFAULT ""')]:
-    if col not in tr_cols:
-      cursor.execute(f"ALTER TABLE transactions ADD COLUMN {col} {col_t}")
 
   # Ensure columns in schools
   cursor.execute("PRAGMA table_info(schools)")
@@ -625,13 +646,23 @@ def init_db():
     if col not in l_cols:
       cursor.execute(f"ALTER TABLE locations ADD COLUMN {col} {col_t}")
 
-  # Run MoEYS sync
-  sync_moeys_locations_and_users()
+  # Indexes ជំនួយល្បឿន
+  cursor.execute("CREATE INDEX IF NOT EXISTS idx_daily_records_sch_date ON daily_records(school_name, date)")
+  cursor.execute("CREATE INDEX IF NOT EXISTS idx_daily_records_date ON daily_records(date)")
+  cursor.execute("CREATE INDEX IF NOT EXISTS idx_suppliers_sch ON suppliers(school_name)")
+  cursor.execute("CREATE INDEX IF NOT EXISTS idx_loc_p_d_c ON locations(province, district, commune)")
+  cursor.execute("CREATE INDEX IF NOT EXISTS idx_sch_p_d_c ON schools(province, district, commune)")
 
   conn.commit()
 
 
-init_db()
+@st.cache_resource
+def run_startup_db_init():
+  init_db()
+  return True
+
+
+run_startup_db_init()
 
 
 # ================= Helper Functions សម្រាប់អ្នកផ្គត់ផ្គង់តាមសាលា =================
@@ -849,6 +880,7 @@ def delete_supplier(supplier_id):
   conn.commit()
 
 
+@st.cache_data(ttl=600)
 def get_catalog_base_price(item_name, school_name=None, commune=None):
   """
   ស្វែងរកតម្លៃគោលនៃមុខទំនិញ៖
@@ -1420,6 +1452,7 @@ def format_supplier_address(sup_dict):
       parts.append(p if p.startswith("ខេត្ត") or p.startswith("រាជធានី") else f"ខេត្ត{p}")
   return " ".join(parts) if parts else sup_dict.get("address", "")
 
+@st.cache_data(ttl=3600)
 def get_provinces():
   cursor.execute(
       "SELECT DISTINCT province FROM locations WHERE province IS NOT NULL AND"
@@ -1428,6 +1461,7 @@ def get_provinces():
   return [r[0] for r in cursor.fetchall()]
 
 
+@st.cache_data(ttl=3600)
 def get_districts(province=None):
   invalid_prov = ["-- ជ្រើសរើស --", "-- ជ្រើសរើសខេត្ត --", "-- ទាំងអស់ --", "➕ វាយបញ្ចូលខេត្តថ្មី..."]
   if province and province not in invalid_prov:
@@ -1444,6 +1478,7 @@ def get_districts(province=None):
   return [r[0] for r in cursor.fetchall()]
 
 
+@st.cache_data(ttl=3600)
 def get_communes(province=None, district=None):
   invalid_prov = ["-- ជ្រើសរើស --", "-- ជ្រើសរើសខេត្ត --", "-- ទាំងអស់ --", "➕ វាយបញ្ចូលខេត្តថ្មី..."]
   invalid_dist = ["-- ជ្រើសរើស --", "-- ជ្រើសរើសស្រុក --", "-- ទាំងអស់ --", "➕ វាយបញ្ចូលស្រុកថ្មី..."]
@@ -1477,6 +1512,7 @@ def get_communes(province=None, district=None):
   return [r[0] for r in cursor.fetchall()]
 
 
+@st.cache_data(ttl=3600)
 def get_villages(commune=None):
   invalid_comm = ["-- ជ្រើសរើស --", "-- ជ្រើសរើសឃុំ --", "-- ទាំងអស់ --", "➕ វាយបញ្ចូលឃុំថ្មី..."]
   if commune and commune not in invalid_comm:
@@ -1493,6 +1529,7 @@ def get_villages(commune=None):
   return [r[0] for r in cursor.fetchall()]
 
 
+@st.cache_data(ttl=3600)
 def get_filtered_schools(province=None, district=None, commune=None):
   """ទាញយកបញ្ជីសាលារៀនចម្រាញ់តាម ខេត្ត ស្រុក ឃុំ"""
   query = "SELECT DISTINCT name FROM schools WHERE TRIM(name) != ''"
@@ -1511,6 +1548,7 @@ def get_filtered_schools(province=None, district=None, commune=None):
   return [r[0] for r in cursor.fetchall()]
 
 
+@st.cache_data(ttl=3600)
 def get_schools_by_commune(commune=None):
   if commune and commune not in ["-- ជ្រើសរើស --", "➕ វាយបញ្ចូលឃុំថ្មី..."]:
     cursor.execute(
@@ -1583,6 +1621,7 @@ def get_scoped_schools(chosen_prov=None, chosen_dist=None, chosen_comm=None, pre
   return ([all_label] + schs) if prefix_all else schs
 
 
+@st.cache_data(ttl=3600)
 def get_all_schools():
   cursor.execute(
       "SELECT DISTINCT name FROM schools WHERE TRIM(name) != '' ORDER BY name"
@@ -1609,6 +1648,7 @@ def save_location(province, district, commune, village=""):
         (p, d, c, v),
     )
     conn.commit()
+    st.cache_data.clear()
   return True, "បានរក្សាទុកទីតាំងជោគជ័យ!"
 
 
@@ -1630,6 +1670,7 @@ def save_school(name, commune, district="", province="", village=""):
         (n, c, d, p, v),
     )
     conn.commit()
+    st.cache_data.clear()
   return True, "បានរក្សាទុកសាលារៀនជោគជ័យ!"
 
 
@@ -5715,6 +5756,7 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
                   f"DELETE FROM schools WHERE id IN ({ph})", chosen_sch_ids
               )
               conn.commit()
+              st.cache_data.clear()
               st.success(
                   f"🎉 បានលុបសាលារៀនចំនួន {len(chosen_sch_ids)} ដោយជោគជ័យ!"
               )
@@ -5803,6 +5845,7 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
               ):
                 cursor.execute("DELETE FROM schools WHERE id=?", (r[0],))
                 conn.commit()
+                st.cache_data.clear()
                 st.success(f"🗑️ បានលុបសាលា '{r[1]}' (ID {r[0]}) រួចរាល់!")
                 st.rerun()
             with rc2:
@@ -5858,6 +5901,7 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
                   " schools GROUP BY TRIM(name), TRIM(commune))"
               )
               conn.commit()
+              st.cache_data.clear()
               st.success(
                   f"🎉 បានសម្អាតទិន្នន័យស្ទួនចំនួន {dup_count} ជួរដោយជោគជ័យ!"
               )
@@ -5929,6 +5973,7 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
                     ),
                 )
                 conn.commit()
+                st.cache_data.clear()
                 st.success(f"បានកែប្រែព័ត៌មានសាលា ID {cur_sch[0]} ដោយជោគជ័យ!")
                 st.rerun()
 
@@ -5940,6 +5985,7 @@ elif menu == "📍 គ្រប់គ្រងទីតាំង និងសា
             ):
               cursor.execute("DELETE FROM schools WHERE id=?", (cur_sch[0],))
               conn.commit()
+              st.cache_data.clear()
               st.success(f"បានលុបសាលារៀន ID {cur_sch[0]} រួចរាល់!")
               st.rerun()
       else:

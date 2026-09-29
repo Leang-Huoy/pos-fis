@@ -13,7 +13,10 @@ def hash_password(password: str) -> str:
 def run_migration():
     start_time = time.time()
     db_path = "school_pos.db"
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     cursor = conn.cursor()
 
     # Load JSON dataset

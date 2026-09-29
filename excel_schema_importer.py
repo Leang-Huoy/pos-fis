@@ -76,7 +76,7 @@ def parse_excel_workbook(file_bytes_or_path, db_conn=None):
 
     # ក. ពី Database SQLite
     try:
-        conn_local = db_conn or sqlite3.connect("school_pos.db")
+        conn_local = db_conn or sqlite3.connect("school_pos.db", timeout=30.0)
         c = conn_local.cursor()
         rows = c.execute("SELECT name, phase1_price, phase2_price FROM products").fetchall()
         for r in rows:
@@ -704,7 +704,9 @@ def import_records_to_database(df_records, db_path="school_pos.db", target_table
     if df_records is None or df_records.empty:
         return 0, "គ្មានទិន្នន័យសម្រាប់ចម្លងចូលទេ"
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     c = conn.cursor()
     imported_count = 0
 
