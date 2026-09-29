@@ -4,7 +4,7 @@ import os
 import re
 import socket
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from docx import Document
 from fpdf import FPDF
 import altair as alt
@@ -573,7 +573,11 @@ def init_db():
         target_commune TEXT DEFAULT '',
         target_district TEXT DEFAULT '',
         target_province TEXT DEFAULT '',
-        gender TEXT DEFAULT 'ប្រុស'
+        gender TEXT DEFAULT 'ប្រុស',
+        phase1_start TEXT DEFAULT '',
+        phase1_end TEXT DEFAULT '',
+        phase2_start TEXT DEFAULT '',
+        phase2_end TEXT DEFAULT ''
     )""")
 
   cursor.execute("PRAGMA table_info(suppliers)")
@@ -585,9 +589,23 @@ def init_db():
       ("target_district", "TEXT DEFAULT ''"),
       ("target_province", "TEXT DEFAULT ''"),
       ("gender", "TEXT DEFAULT 'ប្រុស'"),
+      ("phase1_start", "TEXT DEFAULT ''"),
+      ("phase1_end", "TEXT DEFAULT ''"),
+      ("phase2_start", "TEXT DEFAULT ''"),
+      ("phase2_end", "TEXT DEFAULT ''"),
   ]:
     if col not in sup_cols:
       cursor.execute(f"ALTER TABLE suppliers ADD COLUMN {col} {col_t}")
+
+  cur_yr = date.today().year
+  cursor.execute(f"""
+    UPDATE suppliers 
+    SET phase1_start = '{cur_yr}-01-01',
+        phase1_end   = '{cur_yr}-06-30',
+        phase2_start = '{cur_yr}-07-01',
+        phase2_end   = '{cur_yr}-12-31'
+    WHERE phase1_start IS NULL OR phase1_start = ''
+  """)
 
   cursor.execute("""
     UPDATE suppliers 
@@ -667,11 +685,16 @@ run_startup_db_init()
 
 # ================= Helper Functions សម្រាប់អ្នកផ្គត់ផ្គង់តាមសាលា =================
 def get_supplier_for_school(school_name):
-  """ទាញយកព័ត៌មានអ្នកផ្គត់ផ្គង់សម្រាប់សាលារៀនណាមួយ"""
+  """ទាញយកព័ត៌មានអ្នកផ្គត់ផ្គង់សម្រាប់សាលារៀនណាមួយ រួមទាំងកាលបរិច្ឆេទវគ្គ១ និងវគ្គ២"""
   if not school_name:
     return None
+  cur_y = date.today().year
+  def_p1_s, def_p1_e = f"{cur_y}-01-01", f"{cur_y}-06-30"
+  def_p2_s, def_p2_e = f"{cur_y}-07-01", f"{cur_y}-12-31"
+
   row = cursor.execute("""
-    SELECT supplier_name, village, commune, district, province, phone, signature_data, id, supplied_categories, COALESCE(gender, 'ប្រុស')
+    SELECT supplier_name, village, commune, district, province, phone, signature_data, id, supplied_categories,
+           COALESCE(gender, 'ប្រុស'), COALESCE(phase1_start, ''), COALESCE(phase1_end, ''), COALESCE(phase2_start, ''), COALESCE(phase2_end, '')
     FROM suppliers
     WHERE school_name = ?
        OR (',' || school_name || ',') LIKE ('%,' || ? || ',%')
@@ -695,11 +718,16 @@ def get_supplier_for_school(school_name):
         "signature_data": row[6] or "",
         "address": " ".join(addr_parts) if addr_parts else "ភូមិខ្មែរ ឃុំរោង",
         "supplied_categories": row[8] or "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ",
-        "gender": row[9] or "ប្រុស"
+        "gender": row[9] or "ប្រុស",
+        "phase1_start": row[10] or def_p1_s,
+        "phase1_end": row[11] or def_p1_e,
+        "phase2_start": row[12] or def_p2_s,
+        "phase2_end": row[13] or def_p2_e
     }
   # Fallback ទៅអ្នកផ្គត់ផ្គង់ចុងក្រោយក្នុង DB
   row_any = cursor.execute("""
-    SELECT supplier_name, village, commune, district, province, phone, signature_data, id, supplied_categories, COALESCE(gender, 'ប្រុស')
+    SELECT supplier_name, village, commune, district, province, phone, signature_data, id, supplied_categories,
+           COALESCE(gender, 'ប្រុស'), COALESCE(phase1_start, ''), COALESCE(phase1_end, ''), COALESCE(phase2_start, ''), COALESCE(phase2_end, '')
     FROM suppliers
     ORDER BY id DESC LIMIT 1
   """).fetchone()
@@ -718,7 +746,11 @@ def get_supplier_for_school(school_name):
         "signature_data": row_any[6] or "",
         "address": " ".join(addr_parts) if addr_parts else "ភូមិខ្មែរ ឃុំរោង",
         "supplied_categories": row_any[8] or "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ",
-        "gender": row_any[9] or "ប្រុស"
+        "gender": row_any[9] or "ប្រុស",
+        "phase1_start": row_any[10] or def_p1_s,
+        "phase1_end": row_any[11] or def_p1_e,
+        "phase2_start": row_any[12] or def_p2_s,
+        "phase2_end": row_any[13] or def_p2_e
     }
   return {
       "id": 0,
@@ -731,7 +763,11 @@ def get_supplier_for_school(school_name):
       "signature_data": "",
       "address": "ភូមិខ្មែរ ឃុំរោង",
       "supplied_categories": "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ",
-      "gender": "ប្រុស"
+      "gender": "ប្រុស",
+      "phase1_start": def_p1_s,
+      "phase1_end": def_p1_e,
+      "phase2_start": def_p2_s,
+      "phase2_end": def_p2_e
   }
 
 
@@ -741,7 +777,8 @@ class SupplierRow(dict):
     keys = [
         "id", "school_name", "supplier_name", "village", "commune", "district", "province",
         "phone", "signature_data", "supplied_categories", "supply_level",
-        "target_commune", "target_district", "target_province", "gender"
+        "target_commune", "target_district", "target_province", "gender",
+        "phase1_start", "phase1_end", "phase2_start", "phase2_end"
     ]
     d = {k: (t[i] if i < len(t) and t[i] is not None else "") for i, k in enumerate(keys)}
     super().__init__(d)
@@ -754,14 +791,18 @@ class SupplierRow(dict):
 
 
 def get_all_suppliers():
-  """ទាញយកបញ្ជីអ្នកផ្គត់ផ្គង់ទាំងអស់"""
+  """ទាញយកបញ្ជីអ្នកផ្គត់ផ្គង់ទាំងអស់ រួមទាំងកាលបរិច្ឆេទវគ្គ១ និងវគ្គ២"""
   cursor.execute("""
     SELECT id, school_name, supplier_name, village, commune, district, province, phone, signature_data, supplied_categories,
            COALESCE(supply_level, 'school') as supply_level,
            COALESCE(target_commune, '') as target_commune,
            COALESCE(target_district, '') as target_district,
            COALESCE(target_province, '') as target_province,
-           COALESCE(gender, 'ប្រុស') as gender
+           COALESCE(gender, 'ប្រុស') as gender,
+           COALESCE(phase1_start, '') as phase1_start,
+           COALESCE(phase1_end, '') as phase1_end,
+           COALESCE(phase2_start, '') as phase2_start,
+           COALESCE(phase2_end, '') as phase2_end
     FROM suppliers
     ORDER BY id DESC
   """)
@@ -780,7 +821,11 @@ def get_suppliers_for_school_and_commune(school_name, commune_name):
     SELECT id, school_name, supplier_name, village, commune, district, province,
            phone, signature_data, supplied_categories, supply_level,
            target_commune, target_district, target_province,
-           COALESCE(gender, 'ប្រុស') as gender
+           COALESCE(gender, 'ប្រុស') as gender,
+           COALESCE(phase1_start, '') as phase1_start,
+           COALESCE(phase1_end, '') as phase1_end,
+           COALESCE(phase2_start, '') as phase2_start,
+           COALESCE(phase2_end, '') as phase2_end
     FROM suppliers
     WHERE (school_name = ? AND school_name != '')
        OR ((',' || school_name || ',') LIKE ('%,' || ? || ',%'))
@@ -825,26 +870,37 @@ def save_or_update_supplier(
     target_district="",
     target_province="",
     gender="ប្រុស",
+    phase1_start="",
+    phase1_end="",
+    phase2_start="",
+    phase2_end="",
     supplier_id=None
 ):
-  """រក្សាទុក ឬកែប្រែអ្នកផ្គត់ផ្គង់តាមសាលា ឬតាមឃុំ"""
+  """រក្សាទុក ឬកែប្រែអ្នកផ្គត់ផ្គង់តាមសាលា ឬតាមឃុំ រួមទាំងកាលបរិច្ឆេទវគ្គ១ និងវគ្គ២"""
   sc = supplied_categories or "អង្ករ, អំបិល, ប្រេងឆា, ត្រី សាច់ ស៊ុត, បន្លែ"
   g_val = gender or "ប្រុស"
+  p1_s = str(phase1_start or "").strip()
+  p1_e = str(phase1_end or "").strip()
+  p2_s = str(phase2_start or "").strip()
+  p2_e = str(phase2_end or "").strip()
+
   if supplier_id:
     if signature_data is not None:
       cursor.execute("""
         UPDATE suppliers 
         SET school_name=?, supplier_name=?, village=?, commune=?, district=?, province=?, phone=?,
-            signature_data=?, supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?, gender=?
+            signature_data=?, supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?, gender=?,
+            phase1_start=?, phase1_end=?, phase2_start=?, phase2_end=?
         WHERE id=?
-      """, (school_name, supplier_name, village, commune, district, province, phone, signature_data, sc, supply_level, target_commune, target_district, target_province, g_val, supplier_id))
+      """, (school_name, supplier_name, village, commune, district, province, phone, signature_data, sc, supply_level, target_commune, target_district, target_province, g_val, p1_s, p1_e, p2_s, p2_e, supplier_id))
     else:
       cursor.execute("""
         UPDATE suppliers 
         SET school_name=?, supplier_name=?, village=?, commune=?, district=?, province=?, phone=?,
-            supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?, gender=?
+            supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?, gender=?,
+            phase1_start=?, phase1_end=?, phase2_start=?, phase2_end=?
         WHERE id=?
-      """, (school_name, supplier_name, village, commune, district, province, phone, sc, supply_level, target_commune, target_district, target_province, g_val, supplier_id))
+      """, (school_name, supplier_name, village, commune, district, province, phone, sc, supply_level, target_commune, target_district, target_province, g_val, p1_s, p1_e, p2_s, p2_e, supplier_id))
     conn.commit()
     return supplier_id
   else:
@@ -858,18 +914,22 @@ def save_or_update_supplier(
       cursor.execute("""
         UPDATE suppliers 
         SET school_name=?, village=?, commune=?, district=?, province=?, phone=?,
-            signature_data=COALESCE(?, signature_data), supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?, gender=?
+            signature_data=COALESCE(?, signature_data), supplied_categories=?, supply_level=?, target_commune=?, target_district=?, target_province=?, gender=?,
+            phase1_start=?, phase1_end=?, phase2_start=?, phase2_end=?
         WHERE id=?
-      """, (school_name, village, commune, district, province, phone, signature_data, sc, supply_level, target_commune, target_district, target_province, g_val, s_id))
+      """, (school_name, village, commune, district, province, phone, signature_data, sc, supply_level, target_commune, target_district, target_province, g_val, p1_s, p1_e, p2_s, p2_e, s_id))
       conn.commit()
       return s_id
     else:
       cursor.execute("""
         INSERT INTO suppliers (
           school_name, supplier_name, village, commune, district, province, phone,
-          signature_data, supplied_categories, supply_level, target_commune, target_district, target_province, gender
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      """, (school_name, supplier_name, village, commune, district, province, phone, signature_data or "", sc, supply_level, target_commune, target_district, target_province, g_val))
+          signature_data, supplied_categories, supply_level, target_commune, target_district, target_province, gender,
+          phase1_start, phase1_end, phase2_start, phase2_end
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      """, (school_name, supplier_name, village, commune, district, province, phone, signature_data or "", sc, supply_level, target_commune, target_district, target_province, g_val, p1_s, p1_e, p2_s, p2_e))
+      conn.commit()
+      return cursor.lastrowid
       conn.commit()
       return cursor.lastrowid
 
@@ -1035,55 +1095,158 @@ def get_supplier_prices_map(supplier_name):
 get_supplier_prices = get_supplier_prices_map
 
 
-def filter_and_price_monthly_items(items, supplier_name, supplier_obj=None, claim_month=8):
+def get_supplier_phase_dates(supplier_name=None, school_name=None, commune=None):
   """
-  គណនា និងចម្រាញ់យកតែមុខទំនិញណាដែលឈ្មោះអ្នកផ្គត់ផ្គង់នោះបានជ្រើសរើស និងកំណត់តម្លៃនៅតារាងគ្រប់គ្រងអ្នកផ្គត់ផ្គង់
-  បើជ្រើសរើស 'ទាំងអស់' គណនាទំនិញទាំងអស់ក្នុងខែ។
+  ទាញយកកាលបរិច្ឆេទចាប់ផ្ដើម និងបញ្ចប់នៃវគ្គ១ និងវគ្គ២ របស់អ្នកផ្គត់ផ្គង់ (phase1_start, phase1_end, phase2_start, phase2_end)
+  """
+  cur_y = datetime.now().year
+  def_p1_s, def_p1_e = f"{cur_y}-01-01", f"{cur_y}-06-30"
+  def_p2_s, def_p2_e = f"{cur_y}-07-01", f"{cur_y}-12-31"
+
+  sup_clean = str(supplier_name or "").strip()
+  if sup_clean and not sup_clean.startswith("-- ទាំងអស់"):
+    try:
+      row = cursor.execute("""
+        SELECT COALESCE(phase1_start, ''), COALESCE(phase1_end, ''),
+               COALESCE(phase2_start, ''), COALESCE(phase2_end, '')
+        FROM suppliers 
+        WHERE supplier_name=? 
+        ORDER BY id DESC LIMIT 1
+      """, (sup_clean,)).fetchone()
+      if row and (row[0] or row[1] or row[2] or row[3]):
+        return (
+            row[0] or def_p1_s,
+            row[1] or def_p1_e,
+            row[2] or def_p2_s,
+            row[3] or def_p2_e
+        )
+    except Exception:
+      pass
+
+  # Fallback ស្វែងរកតាមសាលារៀន ឬឃុំ
+  if school_name or commune:
+    try:
+      sch_cond = f"%{school_name}%" if school_name else ""
+      com_cond = f"%{commune}%" if commune else ""
+      row2 = cursor.execute("""
+        SELECT COALESCE(phase1_start, ''), COALESCE(phase1_end, ''),
+               COALESCE(phase2_start, ''), COALESCE(phase2_end, '')
+        FROM suppliers 
+        WHERE (school_name LIKE ? AND school_name != '')
+           OR (target_commune LIKE ? AND target_commune != '')
+           OR (commune LIKE ? AND commune != '')
+        ORDER BY id DESC LIMIT 1
+      """, (sch_cond, com_cond, com_cond)).fetchone()
+      if row2 and (row2[0] or row2[1] or row2[2] or row2[3]):
+        return (
+            row2[0] or def_p1_s,
+            row2[1] or def_p1_e,
+            row2[2] or def_p2_s,
+            row2[3] or def_p2_e
+        )
+    except Exception:
+      pass
+
+  return (def_p1_s, def_p1_e, def_p2_s, def_p2_e)
+
+
+def determine_phase_by_supplier_date(supplier_name, date_val, school_name=None, commune=None):
+  """
+  កំណត់វគ្គ (វគ្គ១ ឬ វគ្គ២) ដោយស្វ័យប្រវត្តតាមកាលបរិច្ឆេទរបស់អ្នកផ្គត់ផ្គង់
+  """
+  p1_s, p1_e, p2_s, p2_e = get_supplier_phase_dates(supplier_name, school_name, commune)
+  return detect_phase_from_date(date_val, p1_s, p1_e, p2_s, p2_e)
+
+
+def get_supplier_item_price(supplier_name, item_name, date_val=None, phase=None, school_name=None, commune=None):
+  """
+  ចាប់យកតម្លៃរាយរបស់ទំនិញពីបញ្ជីអ្នកផ្គត់ផ្គង់តាមវគ្គនៃកាលបរិច្ឆេទ តាមឈ្មោះនីមួយៗ ដោយស្វ័យប្រវត្តិ
+  """
+  if not item_name:
+    return 0.0
+
+  it_clean = str(item_name).strip()
+  sup_clean = str(supplier_name or "").strip()
+
+  # ១. កំណត់វគ្គ (Phase 1 ឬ Phase 2)
+  target_phase = phase
+  if not target_phase and date_val:
+    target_phase, _ = determine_phase_by_supplier_date(sup_clean, date_val, school_name, commune)
+  if not target_phase:
+    target_phase = "វគ្គ១"
+
+  # ២. ទាញយកតម្លៃដែលអ្នកផ្គត់ផ្គង់នេះបានកំណត់ក្នុងតារាង products
+  if sup_clean and not sup_clean.startswith("-- ទាំងអស់"):
+    try:
+      # Exact match
+      row = cursor.execute("""
+        SELECT price_phase1, price_phase2, price_avg 
+        FROM products 
+        WHERE supplier_name=? AND item_name=? AND price_level='supplier'
+        LIMIT 1
+      """, (sup_clean, it_clean)).fetchone()
+
+      # Partial match
+      if not row:
+        row = cursor.execute("""
+          SELECT price_phase1, price_phase2, price_avg 
+          FROM products 
+          WHERE supplier_name=? AND price_level='supplier'
+            AND (item_name LIKE ('%' || ? || '%') OR ? LIKE ('%' || item_name || '%'))
+          ORDER BY LENGTH(item_name) DESC LIMIT 1
+        """, (sup_clean, it_clean, it_clean)).fetchone()
+
+      if row:
+        p1 = float(row[0] or 0)
+        p2 = float(row[1] or 0)
+        p_avg = float(row[2] or 0)
+        if target_phase == "វគ្គ១":
+          return p1 if p1 > 0 else (p_avg if p_avg > 0 else p2)
+        else:
+          return p2 if p2 > 0 else (p_avg if p_avg > 0 else p1)
+    except Exception:
+      pass
+
+  # ៣. ប្រសិនបើគ្មានតម្លៃអ្នកផ្គត់ផ្គង់ ទាញយកតម្លៃគោលពីកាតាឡុក
+  return float(get_catalog_base_price(it_clean, school_name, commune))
+
+
+def filter_and_price_monthly_items(items, supplier_name, supplier_obj=None, claim_month=None, d_start=None, d_end=None, school_name=None, commune=None):
+  """
+  សំណើរសុំទូរទាត់:
+  ១. ប្រសិនបើមិនបានជ្រើសរើសអ្នកផ្គត់ផ្គង់ (ជ្រើសរើស '-- ទាំងអស់ --' ឬទទេ)៖
+     សូមបង្ហាញមុខទំនិញ និងប្រាក់សរុបតាមការជ្រើសរើសសាលានីមួយៗ។
+  ២. ប្រសិនបើជ្រើសរើសឈ្មោះអ្នកផ្គត់ផ្គង់៖
+     សូមបង្ហាញត្រឹមតែមុខទំនិញ និងតម្លៃដែលអ្នកផ្គត់ផ្គង់នោះបានដាក់ ដោយតម្លៃរាយចាប់យកតាមវគ្គនៃកាលបរិច្ឆេទដោយស្វ័យប្រវត្តិ។
   """
   if not items:
     return []
-  if not supplier_name or str(supplier_name).startswith("-- ទាំងអស់"):
+
+  sup_str = str(supplier_name or "").strip()
+  # ប្រសិនបើមិនបានជ្រើសរើសអ្នកផ្គត់ផ្គង់: បង្ហាញមុខទំនិញ និងប្រាក់សរុបទាំងអស់តាមការកត់ត្រារបស់សាលានោះ
+  if not sup_str or sup_str.startswith("-- ទាំងអស់"):
     return items
 
-  # ១. ប្រភេទមុខទំនិញដែលអ្នកផ្គត់ផ្គង់ទទួលខុសត្រូវផ្គត់ផ្គង់
-  sup_cats_raw = ""
-  if supplier_obj and isinstance(supplier_obj, dict):
-    sup_cats_raw = supplier_obj.get("supplied_categories", "") or ""
-  if not sup_cats_raw:
-    row_sc = cursor.execute("SELECT supplied_categories FROM suppliers WHERE supplier_name=? LIMIT 1", (supplier_name,)).fetchone()
-    sup_cats_raw = row_sc[0] if row_sc and row_sc[0] else ""
+  # ទាញយកតារាងតម្លៃដែលអ្នកផ្គត់ផ្គង់នេះបានកំណត់
+  sup_prices = get_supplier_prices_map(sup_str)
 
-  sup_cats = [c.strip() for c in sup_cats_raw.split(",") if c.strip()]
+  # ទាញយកកាលបរិច្ឆេទវគ្គ១ និងវគ្គ២ របស់អ្នកផ្គត់ផ្គង់នេះ
+  p1_s, p1_e, p2_s, p2_e = get_supplier_phase_dates(sup_str, school_name, commune)
 
-  # ២. តម្លៃទំនិញដែលបានកំណត់នៅតារាងគ្រប់គ្រងអ្នកផ្គត់ផ្គង់
-  sup_prices = get_supplier_prices_map(supplier_name)
+  # កំណត់វគ្គសកម្ម (Active Phase) ផ្អែកលើកាលបរិច្ឆេទចាប់ផ្ដើម ឬខែនៃសំណើទូទាត់
+  if d_start:
+    active_phase, _ = detect_phase_from_date(d_start, p1_s, p1_e, p2_s, p2_e)
+  elif claim_month:
+    active_phase = "វគ្គ១" if int(claim_month) <= 6 else "វគ្គ២"
+  else:
+    active_phase = "វគ្គ១"
 
   filtered = []
   for it in items:
     it_name = str(it.get("name", "")).strip()
     it_cat = str(it.get("category", "")).strip() or classify_item_category(it_name)
 
-    # ពិនិត្យលក្ខខណ្ឌមុខទំនិញ៖
-    is_matched = False
-    if sup_cats:
-      for sc in sup_cats:
-        if sc == it_cat or sc in it_cat or it_cat in sc:
-          is_matched = True
-          break
-        if any(w in it_cat for w in sc.split()):
-          is_matched = True
-          break
-    else:
-      is_matched = True
-
-    if not is_matched:
-      continue
-
-    qty = float(it.get("qty", 0) or 0)
-    orig_u_price = float(it.get("unit_price", 0) or 0)
-    final_u_price = orig_u_price
-
-    # ស្វែងរកតម្លៃឯកតាដែលបានកំណត់នៅតារាងគ្រប់គ្រងអ្នកផ្គត់ផ្គង់
+    # ស្វែងរកមុខទំនិញដែលអ្នកផ្គត់ផ្គង់នេះបានដាក់/កំណត់
     sp = sup_prices.get(it_name)
     if not sp:
       for k_p, v_p in sup_prices.items():
@@ -1091,18 +1254,22 @@ def filter_and_price_monthly_items(items, supplier_name, supplier_obj=None, clai
           sp = v_p
           break
 
-    if sp:
-      if claim_month <= 6:
-        target_p = sp.get("p1", 0) or sp.get("avg", 0)
-      else:
-        target_p = sp.get("p2", 0) or sp.get("avg", 0)
+    # ប្រសិនបើជ្រើសរើសឈ្មោះអ្នកផ្គត់ផ្គង់: បង្ហាញត្រឹមតែមុខទំនិញដែលអ្នកផ្គត់ផ្គង់នោះបានដាក់ប៉ុណ្ណោះ!
+    if not sp:
+      continue
 
-      if target_p > 0:
-        final_u_price = target_p
-      elif sp.get("avg", 0) > 0:
-        final_u_price = sp.get("avg", 0)
+    qty = float(it.get("qty", 0) or 0)
+    orig_u_price = float(it.get("unit_price", 0) or 0)
 
+    # ចាប់យកតម្លៃរាយតាមវគ្គនៃកាលបរិច្ឆេទរបស់អ្នកផ្គត់ផ្គង់នេះដោយស្វ័យប្រវត្តិ
+    if active_phase == "វគ្គ១":
+      target_p = sp.get("p1", 0) or sp.get("avg", 0) or sp.get("p2", 0)
+    else:
+      target_p = sp.get("p2", 0) or sp.get("avg", 0) or sp.get("p1", 0)
+
+    final_u_price = target_p if target_p > 0 else orig_u_price
     final_total = round(qty * final_u_price, 2)
+
     it_copy = dict(it)
     it_copy["category"] = it_cat
     it_copy["unit_price"] = final_u_price
@@ -1112,10 +1279,19 @@ def filter_and_price_monthly_items(items, supplier_name, supplier_obj=None, clai
   return filtered
 
 
-def save_all_supplier_prices(supplier_name, price_dict, supply_level="school", target_school="", target_commune="", target_district="", target_province=""):
-  """រក្សាទុកតម្លៃទំនិញទាំងអស់សម្រាប់អ្នកផ្គត់ផ្គង់នេះ (រក្សាទុកតែមុខទំនិញដែលបានធិកជ្រើសយក)"""
+def save_all_supplier_prices(
+    supplier_name, price_dict, supply_level="school",
+    target_school="", target_commune="", target_district="", target_province="",
+    phase1_start="", phase1_end="", phase2_start="", phase2_end=""
+):
+  """រក្សាទុកតម្លៃទំនិញទាំងអស់សម្រាប់អ្នកផ្គត់ផ្គង់នេះ (រក្សាទុកតែមុខទំនិញដែលបានធិកជ្រើសយក) ព្រមទាំងកាលបរិច្ឆេទវគ្គ១ និងវគ្គ២"""
   saved_count = 0
   active_categories = set()
+  p1_s = str(phase1_start or "").strip()
+  p1_e = str(phase1_end or "").strip()
+  p2_s = str(phase2_start or "").strip()
+  p2_e = str(phase2_end or "").strip()
+
   for it in SUPPLIER_PRODUCT_CATALOG:
     name = it["name"]
     category = it["category"]
@@ -1145,25 +1321,50 @@ def save_all_supplier_prices(supplier_name, price_dict, supply_level="school", t
     if existing:
       cursor.execute("""
         UPDATE products 
-        SET price_phase1=?, price_phase2=?, price_avg=?, category=?, commune=?, district=?, province=?, school_name=?, price_level='supplier'
+        SET price_phase1=?, price_phase2=?, price_avg=?, category=?, commune=?, district=?, province=?, school_name=?,
+            phase1_start=?, phase1_end=?, phase2_start=?, phase2_end=?, price_level='supplier'
         WHERE id=?
-      """, (p1, p2, avg_p, category, com_col, target_district, target_province, sch_col, existing[0]))
+      """, (p1, p2, avg_p, category, com_col, target_district, target_province, sch_col, p1_s, p1_e, p2_s, p2_e, existing[0]))
     else:
       cursor.execute("""
         INSERT INTO products (
           item_name, commune, district, province, school_name,
           price_phase1, price_phase2, price_avg, category,
+          phase1_start, phase1_end, phase2_start, phase2_end,
           price_level, supplier_name
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'supplier', ?)
-      """, (name, com_col, target_district, target_province, sch_col, p1, p2, avg_p, category, supplier_name))
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'supplier', ?)
+      """, (name, com_col, target_district, target_province, sch_col, p1, p2, avg_p, category, p1_s, p1_e, p2_s, p2_e, supplier_name))
     saved_count += 1
 
-  # Sync active categories to suppliers.supplied_categories if any items were selected
+  # Sync active categories and phase dates to suppliers table
+  upd_clauses = []
+  upd_params = []
   if active_categories:
     cat_str = ", ".join(sorted(list(active_categories)))
-    cursor.execute("UPDATE suppliers SET supplied_categories=? WHERE supplier_name=?", (cat_str, supplier_name))
+    upd_clauses.append("supplied_categories=?")
+    upd_params.append(cat_str)
+  if p1_s:
+    upd_clauses.append("phase1_start=?")
+    upd_params.append(p1_s)
+  if p1_e:
+    upd_clauses.append("phase1_end=?")
+    upd_params.append(p1_e)
+  if p2_s:
+    upd_clauses.append("phase2_start=?")
+    upd_params.append(p2_s)
+  if p2_e:
+    upd_clauses.append("phase2_end=?")
+    upd_params.append(p2_e)
+
+  if upd_clauses:
+    upd_params.append(supplier_name)
+    cursor.execute(f"UPDATE suppliers SET {', '.join(upd_clauses)} WHERE supplier_name=?", tuple(upd_params))
 
   conn.commit()
+  try:
+    st.cache_data.clear()
+  except Exception:
+    pass
   return saved_count
 
 
@@ -6146,6 +6347,9 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
         p_count = p_cnt_row[0] if p_cnt_row else 0
         price_stat = f"✅ កំណត់រួច ({p_count} មុខ)" if p_count > 0 else "⚪ ប្រើតម្លៃគោល"
 
+        p1_range_txt = f"{s['phase1_start']} ដល់ {s['phase1_end']}" if (s.get("phase1_start") and s.get("phase1_end")) else "-"
+        p2_range_txt = f"{s['phase2_start']} ដល់ {s['phase2_end']}" if (s.get("phase2_start") and s.get("phase2_end")) else "-"
+
         sup_display_list.append({
             "ID": s["id"],
             "ឈ្មោះអ្នកផ្គត់ផ្គង់": s["supplier_name"],
@@ -6154,6 +6358,8 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
             "អាស័យដ្ឋានអ្នកផ្គត់ផ្គង់": full_addr,
             "កម្រិតផ្គត់ផ្គង់": lvl_label,
             "គោលដៅផ្គត់ផ្គង់": target_dest,
+            "វគ្គ១ (ចាប់ផ្ដើម - បញ្ចប់)": p1_range_txt,
+            "វគ្គ២ (ចាប់ផ្ដើម - បញ្ចប់)": p2_range_txt,
             "ហត្ថលេខា": sig_stat,
             "ស្ថានភាពតម្លៃ": price_stat
         })
@@ -6187,6 +6393,8 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
               st.markdown(f"📍 **អាស័យដ្ឋានផ្ទាល់ខ្លួន៖** {picked_s['village']} {picked_s['commune']} {picked_s['district']} {picked_s['province']}")
               lvl_text = "🏢 តាមស្រុក (District Level)" if picked_s["supply_level"] == "district" else ("🏛️ តាមឃុំ (Commune Level)" if picked_s["supply_level"] == "commune" else "🏫 តាមសាលា (School Level)")
               st.markdown(f"🎯 **កម្រិតផ្គត់ផ្គង់៖** `{lvl_text}`")
+              st.markdown(f"📅 **កាលបរិច្ឆេទ វគ្គ១ (Phase 1)៖** `{picked_s.get('phase1_start') or '-'} ដល់ {picked_s.get('phase1_end') or '-'}`")
+              st.markdown(f"📅 **កាលបរិច្ឆេទ វគ្គ២ (Phase 2)៖** `{picked_s.get('phase2_start') or '-'} ដល់ {picked_s.get('phase2_end') or '-'}`")
               if picked_s["supply_level"] == "district":
                 st.markdown(f"🏢 **ស្រុកគោលដៅ៖** `{picked_s['target_district']}`")
                 st.markdown(f"🏛️ **ឃុំដែលផ្គត់ផ្គង់ ({len(picked_s['target_commune'].split(',')) if picked_s['target_commune'] else 0} ឃុំ)៖** `{picked_s['target_commune']}`")
@@ -6453,8 +6661,34 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
       else:
         st.warning("⚠️ សូមធីកជ្រើសរើសយ៉ាងហោចណាស់សាលារៀន ១ សម្រាប់អ្នកផ្គត់ផ្គង់នេះ!")
 
-    # 5. កំណត់តម្លៃទំនិញផ្គត់ផ្គង់ & ប្រៀបធៀបតម្លៃគោល
-    st.markdown("#### 💰 ៥. កំណត់តម្លៃទំនិញផ្គត់ផ្គង់ & ផ្ទៀងផ្ទាត់ធៀបនឹងតម្លៃគោល")
+    # 4.5. កាលបរិច្ឆេទអនុវត្តវគ្គផ្គត់ផ្គង់ (វគ្គ១ និងវគ្គ២ ៖ ថ្ងៃចាប់ផ្ដើម និងបញ្ចប់)
+    st.markdown("#### 📅 ៥. កាលបរិច្ឆេទអនុវត្តវគ្គផ្គត់ផ្គង់ (វគ្គ១ និង វគ្គ២ ៖ ថ្ងៃចាប់ផ្ដើម និងបញ្ចប់)")
+    st.caption("💡 កាលបរិច្ឆេទនេះប្រើប្រាស់សម្រាប់កំណត់តម្លៃរាយដោយស្វ័យប្រវត្តក្នុងវិក្កយបត្រ (បង្កាន់ដៃ) និងសំណើទូទាត់ប្រចាំខែ។")
+    
+    cur_y_sup = datetime.now().year
+    def_d_p1_s = parse_date_safe(cur_sup["phase1_start"]) if (cur_sup and cur_sup.get("phase1_start")) else date(cur_y_sup, 1, 1)
+    def_d_p1_e = parse_date_safe(cur_sup["phase1_end"]) if (cur_sup and cur_sup.get("phase1_end")) else date(cur_y_sup, 6, 30)
+    def_d_p2_s = parse_date_safe(cur_sup["phase2_start"]) if (cur_sup and cur_sup.get("phase2_start")) else date(cur_y_sup, 7, 1)
+    def_d_p2_e = parse_date_safe(cur_sup["phase2_end"]) if (cur_sup and cur_sup.get("phase2_end")) else date(cur_y_sup, 12, 31)
+
+    c_ph_box1, c_ph_box2 = st.columns(2)
+    with c_ph_box1:
+      st.markdown("##### 🟢 វគ្គ១ (Phase 1)")
+      c_p1_in1, c_p1_in2 = st.columns(2)
+      with c_p1_in1:
+        val_p1_start = st.date_input("ថ្ងៃចាប់ផ្ដើម វគ្គ១", value=def_d_p1_s, key=f"inp_p1_s_{sup_id_for_key}")
+      with c_p1_in2:
+        val_p1_end = st.date_input("ថ្ងៃបញ្ចប់ វគ្គ១", value=def_d_p1_e, key=f"inp_p1_e_{sup_id_for_key}")
+    with c_ph_box2:
+      st.markdown("##### 🔵 វគ្គ២ (Phase 2)")
+      c_p2_in1, c_p2_in2 = st.columns(2)
+      with c_p2_in1:
+        val_p2_start = st.date_input("ថ្ងៃចាប់ផ្ដើម វគ្គ២", value=def_d_p2_s, key=f"inp_p2_s_{sup_id_for_key}")
+      with c_p2_in2:
+        val_p2_end = st.date_input("ថ្ងៃបញ្ចប់ វគ្គ២", value=def_d_p2_e, key=f"inp_p2_e_{sup_id_for_key}")
+
+    # 6. កំណត់តម្លៃទំនិញផ្គត់ផ្គង់ & ប្រៀបធៀបតម្លៃគោល
+    st.markdown("#### 💰 ៦. កំណត់តម្លៃទំនិញផ្គត់ផ្គង់ & ផ្ទៀងផ្ទាត់ធៀបនឹងតម្លៃគោល")
     
     st.markdown("""
     <div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 12px 16px; margin-bottom: 14px;">
@@ -6617,9 +6851,11 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
       with th_col1:
         st.markdown("<div style='font-weight: 700; color: #1e293b;'>ឈ្មោះមុខទំនិញ & ឯកត្តា</div>", unsafe_allow_html=True)
       with th_col2:
-        st.markdown("<div style='font-weight: 700; color: #1e293b; text-align: center;'>តម្លៃវគ្គ១ (៛)</div>", unsafe_allow_html=True)
+        p1_dt_lbl = f"<br><span style='font-size: 10px; color: #166534;'>({val_p1_start.strftime('%d/%m')} - {val_p1_end.strftime('%d/%m')})</span>" if val_p1_start and val_p1_end else ""
+        st.markdown(f"<div style='font-weight: 700; color: #1e293b; text-align: center;'>តម្លៃវគ្គ១ (៛){p1_dt_lbl}</div>", unsafe_allow_html=True)
       with th_col3:
-        st.markdown("<div style='font-weight: 700; color: #1e293b; text-align: center;'>តម្លៃវគ្គ២ (៛)</div>", unsafe_allow_html=True)
+        p2_dt_lbl = f"<br><span style='font-size: 10px; color: #1e40af;'>({val_p2_start.strftime('%d/%m')} - {val_p2_end.strftime('%d/%m')})</span>" if val_p2_start and val_p2_end else ""
+        st.markdown(f"<div style='font-weight: 700; color: #1e293b; text-align: center;'>តម្លៃវគ្គ២ (៛){p2_dt_lbl}</div>", unsafe_allow_html=True)
       with th_col4:
         st.markdown("<div style='font-weight: 700; color: #1e293b; text-align: center;'>តម្លៃមធ្យម (៛)</div>", unsafe_allow_html=True)
       with th_col5:
@@ -6749,6 +6985,11 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
       else:
         final_sig_data = uploaded_sig_data if uploaded_sig_data is not None else (existing_sig_val or "")
         sup_lvl_str = "district" if is_district_level else ("commune" if is_commune_level else "school")
+        str_p1_s = val_p1_start.strftime("%Y-%m-%d") if val_p1_start else f"{cur_y_sup}-01-01"
+        str_p1_e = val_p1_end.strftime("%Y-%m-%d") if val_p1_end else f"{cur_y_sup}-06-30"
+        str_p2_s = val_p2_start.strftime("%Y-%m-%d") if val_p2_start else f"{cur_y_sup}-07-01"
+        str_p2_e = val_p2_end.strftime("%Y-%m-%d") if val_p2_end else f"{cur_y_sup}-12-31"
+
         saved_id = save_or_update_supplier(
             school_name=tgt_school,
             supplier_name=val_name,
@@ -6763,6 +7004,10 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
             target_district=tgt_district,
             target_province=tgt_province,
             gender=val_gender,
+            phase1_start=str_p1_s,
+            phase1_end=str_p1_e,
+            phase2_start=str_p2_s,
+            phase2_end=str_p2_e,
             supplier_id=cur_sup["id"] if cur_sup else None
         )
         saved_prods_count = save_all_supplier_prices(
@@ -6772,7 +7017,11 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
             target_school=tgt_school,
             target_commune=tgt_commune,
             target_district=tgt_district,
-            target_province=tgt_province
+            target_province=tgt_province,
+            phase1_start=str_p1_s,
+            phase1_end=str_p1_e,
+            phase2_start=str_p2_s,
+            phase2_end=str_p2_e
         )
         st.success(f"🎉 បានរក្សាទុកអ្នកផ្គត់ផ្គង់ «{val_name}» ({val_gender}) និងមុខទំនិញដែលបានជ្រើសយកចំនួន {saved_prods_count} មុខដោយជោគជ័យ!")
         st.rerun()
@@ -8003,22 +8252,35 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
     auto_v_no = get_or_create_voucher_no(inv_school, str(inv_date))
 
     # ទាញយកព័ត៌មានអ្នកផ្គត់ផ្គង់ដែលផ្គត់ផ្គង់សាលានេះពី Database
+    available_sups_rec = get_suppliers_for_school_and_commune(inv_school, act_commune)
+    sup_names_rec = list(dict.fromkeys([s["supplier_name"] for s in available_sups_rec if s.get("supplier_name")]))
     school_sup_info = get_supplier_for_school(inv_school)
-    default_sup_name = school_sup_info.get("supplier_name", "សាត ក្រូត") if school_sup_info else "សាត ក្រូត"
-    saved_sup_sig = school_sup_info.get("signature_data") if school_sup_info else None
+    default_sup_name = school_sup_info.get("supplier_name", "សាត ក្រូត") if school_sup_info else (sup_names_rec[0] if sup_names_rec else "សាត ក្រូត")
 
     with col_v1:
       cur_voucher_no = st.text_input("លេខសក្ខីប័ត្រ (អូតូតាមសាលា)", value=auto_v_no, key=f"annex3_vno_{inv_school}_{inv_date}")
       st.caption("🔢 ចាប់ផ្ដើមពី `001` ដោយឡែកតាមសាលានីមួយៗ")
 
     with col_v2:
-      supplier_name = st.text_input("ឈ្មោះអ្នកផ្គត់ផ្គង់ស្បៀង", value=default_sup_name, key=f"annex3_sup_{inv_school}_{inv_date}")
-      if school_sup_info:
-        sup_addr_badge = format_supplier_address(school_sup_info)
-        st.caption(f"🚚 📞 `{school_sup_info.get('phone', 'N/A')}` | 🏠 {sup_addr_badge}")
+      if len(sup_names_rec) > 1:
+        def_s_idx = sup_names_rec.index(default_sup_name) if default_sup_name in sup_names_rec else 0
+        supplier_name = st.selectbox("ឈ្មោះអ្នកផ្គត់ផ្គង់ស្បៀង", sup_names_rec, index=def_s_idx, key=f"annex3_sup_{inv_school}_{inv_date}")
+      else:
+        supplier_name = st.text_input("ឈ្មោះអ្នកផ្គត់ផ្គង់ស្បៀង", value=default_sup_name, key=f"annex3_sup_{inv_school}_{inv_date}")
+
+      active_rec_sup = next((s for s in available_sups_rec if s["supplier_name"] == supplier_name), school_sup_info)
+      saved_sup_sig = active_rec_sup.get("signature_data") if active_rec_sup else (school_sup_info.get("signature_data") if school_sup_info else None)
+      if active_rec_sup:
+        sup_addr_badge = format_supplier_address(active_rec_sup)
+        st.caption(f"🚚 📞 `{active_rec_sup.get('phone', 'N/A')}` | 🏠 {sup_addr_badge}")
 
     with col_v3:
       inv_comment = st.text_input("យោបល់ចំពោះទំនិញ (ប្រសិនបើមាន)", value="", key=f"annex3_cmt_{inv_school}_{inv_date}")
+
+    # កំណត់វគ្គស្វ័យប្រវត្តតាមកាលបរិច្ឆេទអ្នកផ្គត់ផ្គង់
+    inv_auto_phase, inv_auto_reason = determine_phase_by_supplier_date(supplier_name, inv_date, school_name=inv_school, commune=act_commune)
+    p1_s, p1_e, p2_s, p2_e = get_supplier_phase_dates(supplier_name, school_name=inv_school, commune=act_commune)
+    st.info(f"🚚 **អ្នកផ្គត់ផ្គង់៖** «{supplier_name}» | 📅 វគ្គ១: `{p1_s} ដល់ {p1_e}` • វគ្គ២: `{p2_s} ដល់ {p2_e}` | ⚡ **តម្លៃរាយស្វ័យប្រវត្តតាមកាលបរិច្ឆេទ {inv_date}៖** **{inv_auto_phase}** ({inv_auto_reason})")
 
     # មុខងារបញ្ចូល និងគ្រប់គ្រងហត្ថលេខាលើវិក្កយបត្រ A5 (Signatures)
     with st.expander("✍️ មុខងារបញ្ចូល និងគ្រប់គ្រងហត្ថលេខាលើវិក្កយបត្រ (Signatures)", expanded=False):
@@ -8064,6 +8326,26 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
                WHERE school_name=? AND date=? 
                ORDER BY id ASC"""
     df_inv_full = pd.read_sql_query(query, conn, params=(inv_school, str(inv_date)))
+
+    # បំពេញតម្លៃរាយស្វ័យប្រវត្តពីអ្នកផ្គត់ផ្គង់ ប្រសិនបើតម្លៃរាយស្មើ 0
+    if not df_inv_full.empty:
+      needs_sync = False
+      for idx_r, r_it in df_inv_full.iterrows():
+        u_p_val = float(r_it.get("តម្លៃរាយ (៛)", 0) or 0)
+        if u_p_val <= 0:
+          auto_u_p = get_supplier_item_price(
+              supplier_name, r_it["មុខទំនិញ"],
+              date_val=inv_date, phase=r_it.get("វគ្គ") or inv_auto_phase,
+              school_name=inv_school, commune=act_commune
+          )
+          if auto_u_p > 0:
+            df_inv_full.at[idx_r, "តម្លៃរាយ (៛)"] = auto_u_p
+            df_inv_full.at[idx_r, "សរុប (៛)"] = round(float(r_it["បរិមាណ"]) * auto_u_p, 2)
+            cursor.execute("UPDATE daily_records SET unit_price=?, total_price=? WHERE id=?", (auto_u_p, df_inv_full.at[idx_r, "សរុប (៛)"], r_it["id"]))
+            needs_sync = True
+      if needs_sync:
+        conn.commit()
+
     df_inv = df_inv_full[["មុខទំនិញ", "វគ្គ", "បរិមាណ", "តម្លៃរាយ (៛)", "សរុប (៛)"]] if not df_inv_full.empty else pd.DataFrame()
 
     # ៣. ប្រអប់បន្ថែម ឬកែប្រែទំនិញដោយផ្ទាល់លើវិក្កយបត្រនេះ
@@ -8080,16 +8362,18 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
           quick_item_name = quick_item_sel
 
       with col_add2:
-        quick_phase = st.selectbox("វគ្គ", ["វគ្គ១", "វគ្គ២"], key="quick_add_phase")
+        quick_phase = st.selectbox("វគ្គ", ["វគ្គ១", "វគ្គ២"], index=(1 if inv_auto_phase == "វគ្គ២" else 0), key=f"quick_add_phase_{inv_school}_{inv_date}_{supplier_name}")
 
       with col_add3:
         quick_qty = st.number_input("បរិមាណ", min_value=0.1, value=1.0, step=0.1, key="quick_add_qty")
 
       with col_add4:
-        def_price = 0.0
-        if quick_item_name in prod_map:
-          p1, p2 = prod_map[quick_item_name]
-          def_price = p1 if quick_phase == "វគ្គ១" else p2
+        # ចាប់យកតម្លៃរាយពីបញ្ជីអ្នកផ្គត់ផ្គង់តាមវគ្គនៃកាលបរិច្ឆេទ តាមឈ្មោះនីមួយៗ ដោយស្វ័យប្រវត្តិ
+        def_price = get_supplier_item_price(
+            supplier_name, quick_item_name,
+            date_val=inv_date, phase=quick_phase,
+            school_name=inv_school, commune=act_commune
+        )
         quick_price = st.number_input("តម្លៃរាយ (៛)", min_value=0, value=int(round(def_price)), step=100, format="%d", key="quick_add_price")
 
       with col_add5:
@@ -8112,21 +8396,20 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
       if not df_inv_full.empty:
         col_price_info, col_price_btn = st.columns([2.2, 1.2])
         with col_price_info:
-          st.caption(f"🏷️ **តម្លៃសម្រាប់គណនា៖** ផ្អែកលើអ្នកផ្គត់ផ្គង់ **«{supplier_name}»** | សាលា **«{inv_school}»** | ឃុំ **«{act_commune}»**")
+          st.caption(f"🏷️ **តម្លៃសម្រាប់គណនា៖** ផ្អែកលើអ្នកផ្គត់ផ្គង់ **«{supplier_name}»** តាម **{inv_auto_phase}** | សាលា **«{inv_school}»** | ឃុំ **«{act_commune}»**")
         with col_price_btn:
           if st.button("🔄 គណនាតម្លៃឡើងវិញស្វ័យប្រវត្ត", key="btn_refresh_inv_prices", use_container_width=True):
             recalc_cnt = 0
             for _, r_it in df_inv_full.iterrows():
               it_nm = r_it["មុខទំនិញ"]
-              it_ph = r_it["វគ្គ"] if "វគ្គ" in r_it and r_it["វគ្គ"] else "វគ្គ១"
-              if it_nm in prod_info_map:
-                u_p = prod_info_map[it_nm]["price_phase1"] if it_ph == "វគ្គ១" else prod_info_map[it_nm]["price_phase2"]
-                if u_p > 0:
-                  tot_p = float(r_it["បរិមាណ"]) * u_p
-                  cursor.execute("UPDATE daily_records SET unit_price=?, total_price=? WHERE id=?", (u_p, tot_p, r_it["id"]))
-                  recalc_cnt += 1
+              it_ph = inv_auto_phase
+              u_p = get_supplier_item_price(supplier_name, it_nm, date_val=inv_date, phase=it_ph, school_name=inv_school, commune=act_commune)
+              if u_p > 0:
+                tot_p = float(r_it["បរិមាណ"]) * u_p
+                cursor.execute("UPDATE daily_records SET phase=?, unit_price=?, total_price=? WHERE id=?", (it_ph, u_p, tot_p, r_it["id"]))
+                recalc_cnt += 1
             conn.commit()
-            st.success(f"✅ បានកែសម្រួលតម្លៃ {recalc_cnt} មុខទំនិញទៅតាមតម្លៃអ្នកផ្គត់ផ្គង់ សាលា និងឃុំ!")
+            st.success(f"✅ បានកែសម្រួលតម្លៃ {recalc_cnt} មុខទំនិញទៅតាមតម្លៃអ្នកផ្គត់ផ្គង់ «{supplier_name}» តាម{inv_auto_phase} ដោយស្វ័យប្រវត្តិ!")
             st.rerun()
 
         st.markdown("###### បញ្ជីទំនិញបច្ចុប្បន្ន (អាចលុបបាន):")
@@ -8729,7 +9012,12 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
       r_find = cursor.execute("""
         SELECT id, school_name, supplier_name, village, commune, district, province,
                phone, signature_data, supplied_categories, supply_level,
-               target_commune, target_district, target_province
+               target_commune, target_district, target_province,
+               COALESCE(gender, 'ប្រុស') as gender,
+               COALESCE(phase1_start, '') as phase1_start,
+               COALESCE(phase1_end, '') as phase1_end,
+               COALESCE(phase2_start, '') as phase2_start,
+               COALESCE(phase2_end, '') as phase2_end
         FROM suppliers WHERE supplier_name=? LIMIT 1
       """, (chosen_sup_sel,)).fetchone()
       active_sup_obj = SupplierRow(r_find) if r_find else None
@@ -8860,7 +9148,9 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
       it["voucher_ref"] = format_voucher_reference(it.get("vouchers") or it.get("voucher_ref", ""), mode=v_mode_val)
     st.session_state[base_items_key] = raw_base
     st.session_state[session_key] = filter_and_price_monthly_items(
-        raw_base, chosen_sup_sel, active_sup_obj, claim_month
+        raw_base, chosen_sup_sel, active_sup_obj,
+        claim_month=claim_month, d_start=claim_start_date, d_end=claim_end_date,
+        school_name=claim_school, commune=act_commune
     )
   elif session_key not in st.session_state and alt_session_key in st.session_state:
     prev_items = st.session_state[alt_session_key]
@@ -8879,10 +9169,20 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
 
   if session_key not in st.session_state:
     st.session_state[session_key] = filter_and_price_monthly_items(
-        raw_base, chosen_sup_sel, active_sup_obj, claim_month
+        raw_base, chosen_sup_sel, active_sup_obj,
+        claim_month=claim_month, d_start=claim_start_date, d_end=claim_end_date,
+        school_name=claim_school, commune=act_commune
     )
 
   current_items = list(st.session_state[session_key])
+
+  # បង្ហាញព័ត៌មានស្ថានភាពមុខទំនិញ និងតម្លៃស្វ័យប្រវត្ត
+  if chosen_sup_sel != "-- ទាំងអស់ (រួមគ្រប់អ្នកផ្គត់ផ្គង់) --":
+    p1_s, p1_e, p2_s, p2_e = get_supplier_phase_dates(chosen_sup_sel, claim_school, act_commune)
+    claim_phase, claim_phase_reason = detect_phase_from_date(claim_start_date, p1_s, p1_e, p2_s, p2_e)
+    st.info(f"🚚 **អ្នកផ្គត់ផ្គង់៖** «{chosen_sup_sel}» | 📅 វគ្គ១: `{p1_s} ដល់ {p1_e}` • វគ្គ២: `{p2_s} ដល់ {p2_e}` | ⚡ **វគ្គគណនាតម្លៃស្វ័យប្រវត្ត ({claim_start_date})៖** **{claim_phase}** ({claim_phase_reason}) | 📦 បង្ហាញត្រឹមតែមុខទំនិញ និងតម្លៃដែលអ្នកផ្គត់ផ្គង់នេះបានដាក់ ({len(current_items)} មុខ)")
+  else:
+    st.info(f"🏫 **សាលារៀន៖** «{claim_school}» | 📦 បង្ហាញមុខទំនិញ និងប្រាក់សរុបទាំងអស់តាមការជ្រើសរើសសាលានេះ ({len(current_items)} មុខ) | រួមគ្រប់អ្នកផ្គត់ផ្គង់")
 
   # ស្វែងរកប្រភេទសម្គាល់ស្វ័យប្រវត្តិពីទិន្នន័យមុខទំនិញក្នុងសំណើ
   detected_cats = set()
@@ -8971,7 +9271,9 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
       ]
       st.session_state[base_items_key] = sample_18
       st.session_state[session_key] = filter_and_price_monthly_items(
-          sample_18, chosen_sup_sel, active_sup_obj, claim_month
+          sample_18, chosen_sup_sel, active_sup_obj,
+          claim_month=claim_month, d_start=claim_start_date, d_end=claim_end_date,
+          school_name=claim_school, commune=act_commune
       )
       st.rerun()
 
@@ -8980,7 +9282,9 @@ elif menu == "📑 សំណើទូទាត់ប្រចាំខែ":
       raw_db = get_monthly_claim_items(claim_school, claim_start_date, claim_end_date, voucher_mode=v_mode_val)
       st.session_state[base_items_key] = raw_db
       st.session_state[session_key] = filter_and_price_monthly_items(
-          raw_db, chosen_sup_sel, active_sup_obj, claim_month
+          raw_db, chosen_sup_sel, active_sup_obj,
+          claim_month=claim_month, d_start=claim_start_date, d_end=claim_end_date,
+          school_name=claim_school, commune=act_commune
       )
       st.rerun()
 
