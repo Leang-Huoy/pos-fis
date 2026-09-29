@@ -6059,7 +6059,7 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
     if st.button("🔄 Refresh", key="btn_ref_supplier_menu", use_container_width=True, help="Refresh ទំព័រអ្នកផ្គត់ផ្គង់"):
       st.rerun()
   st.info(
-      "💡 គ្រប់គ្រងព័ត៌មានផ្ទាល់ខ្លួនអ្នកផ្គត់ផ្គង់, អាស័យដ្ឋាន, ហត្ថលេខា (ជាមួយប៊ូតុងលុបផ្ទៃខាងក្រោយ), ពត៌មានផ្គត់ផ្គង់ (កម្រិតឃុំ ឬសាលា) ព្រមទាំងកំណត់តម្លៃវគ្គ១/វគ្គ២ និងផ្ទៀងផ្ទាត់ធៀបនឹងតម្លៃគោលដោយស្វ័យប្រវត្តិ។"
+      "💡 **សិទ្ធិប្រើប្រាស់ពេញលេញ:** គ្រប់គណនីទាំងអស់ (Admin, មន្ទីរអប់រំខេត្ត, ការិយាល័យអប់រំស្រុក, រដ្ឋបាលឃុំ/សង្កាត់) មានសិទ្ធិពេញលេញក្នុងការមើល បង្កើត និងកែតម្រូវព័ត៌មានផ្ទាល់ខ្លួនអ្នកផ្គត់ផ្គង់ អាស័យដ្ឋាន ហត្ថលេខា ពត៌មានផ្គត់ផ្គង់ ព្រមទាំងកំណត់តម្លៃទំនិញទាំងអស់ក្នុងប្រព័ន្ធ។"
   )
 
   sup_tab1, sup_tab2, sup_tab3, sup_tab4 = st.tabs([
@@ -6073,31 +6073,7 @@ elif menu in ["🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្
   with sup_tab1:
     st.subheader("📋 បញ្ជីអ្នកផ្គត់ផ្គង់ស្បៀងទាំងអស់ក្នុងប្រព័ន្ធ")
     raw_sups = get_all_suppliers()
-    if not is_admin:
-      if user_comm:
-        all_sups = [
-            s for s in raw_sups
-            if user_comm in (s.get("target_commune") or "")
-            or user_comm == (s.get("commune") or "")
-            or (s.get("supply_level") == "district" and (s.get("target_district") == user_dist or s.get("district") == user_dist))
-        ]
-      elif user_dist:
-        all_sups = [
-            s for s in raw_sups
-            if user_dist == (s.get("district") or "")
-            or user_dist == (s.get("target_district") or "")
-            or any(user_dist in str(c) for c in [(s.get("commune") or ""), (s.get("target_commune") or "")])
-        ]
-      elif user_prov:
-        all_sups = [
-            s for s in raw_sups
-            if user_prov == (s.get("province") or "")
-            or user_prov == (s.get("target_province") or "")
-        ]
-      else:
-        all_sups = []
-    else:
-      all_sups = raw_sups
+    all_sups = raw_sups
     if all_sups:
       sup_display_list = []
       for s in all_sups:
