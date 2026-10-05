@@ -9,6 +9,7 @@ menu_data.py
 import io
 import re
 import csv
+import textwrap
 import sqlite3
 from datetime import datetime, date
 import pandas as pd
@@ -481,7 +482,7 @@ def save_school_daily_requirements(conn, school_name, act_comm, act_dist, act_pr
     ដោយស្វ័យប្រវត្តិសម្រាប់សាលានេះ តាមកាលបរិច្ឆេទដែលបានជ្រើសរើសក្នុងខែ
     ព្រមទាំងស្បៀងគោលទុកបានយូរនៅថ្ងៃដើមខែ។
     """
-    if not school_name or school_name == "គ្មានសាលា":
+    if not school_name or school_name in ["-- ជ្រើសរើសសាលារៀន --", "គ្មានសាលា"]:
         return {"success": False, "message": "សូមជ្រើសរើសសាលារៀនជាមុនសិន!"}
 
     c = conn.cursor()
@@ -655,9 +656,78 @@ def save_school_daily_requirements(conn, school_name, act_comm, act_dist, act_pr
         "school_name": school_name
     }
 
+
+def save_school_staples_only(conn, school_name, delivery_date, staple_items):
+    """
+    កត់ត្រា និងរក្សាទុកស្បៀងទុកបានយូរ (អង្ករ, ប្រេងឆា, អំបិល, ទឹកត្រី) ចូលក្នុង daily_records
+    """
+    if not school_name or school_name in ["-- ជ្រើសរើសសាលារៀន --", "គ្មានសាលា"]:
+        return {"success": False, "message": "សូមជ្រើសរើសសាលារៀនជាមុនសិន!"}
+    c = conn.cursor()
+    d_str = str(delivery_date).strip()[:10]
+    v_no = get_or_create_school_voucher(conn, school_name, d_str)
+    phase = determine_phase_for_date(conn, school_name, d_str)
+
+    c.execute("PRAGMA table_info(daily_records)")
+    dr_cols = [col[1] for col in c.fetchall()]
+    if "category" not in dr_cols:
+        try:
+            c.execute("ALTER TABLE daily_records ADD COLUMN category TEXT DEFAULT ''")
+        except Exception:
+            pass
+    if "menu_name" not in dr_cols:
+        try:
+            c.execute("ALTER TABLE daily_records ADD COLUMN menu_name TEXT DEFAULT ''")
+        except Exception:
+            pass
+
+    inserted_count = 0
+    total_cost = 0.0
+
+    for it in staple_items:
+        s_name = str(it.get("item_name", "")).strip()
+        if not s_name:
+            continue
+        s_cat = str(it.get("category", "")).strip() or auto_classify_category(s_name)
+        s_qty = float(it.get("quantity") or 0.0)
+        s_price = float(it.get("unit_price") or 0.0)
+        s_tot = round(s_qty * s_price, 2)
+        total_cost += s_tot
+
+        ex_st = c.execute(
+            "SELECT id FROM daily_records WHERE school_name=? AND date=? AND item_name=?",
+            (school_name, d_str, s_name)
+        ).fetchone()
+
+        if ex_st:
+            c.execute("""
+                UPDATE daily_records 
+                SET quantity=?, unit_price=?, total_price=?, phase=?, voucher_no=?, consumption_date=?, category=?, menu_name='ស្បៀងទុកបានយូរ'
+                WHERE id=?
+            """, (s_qty, s_price, s_tot, phase, v_no, d_str, s_cat, ex_st[0]))
+        else:
+            c.execute("""
+                INSERT INTO daily_records (
+                    date, school_name, item_name, phase, quantity, unit_price, total_price, voucher_no, consumption_date, category, menu_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ស្បៀងទុកបានយូរ')
+            """, (d_str, school_name, s_name, phase, s_qty, s_price, s_tot, v_no, d_str, s_cat))
+        inserted_count += 1
+
+    conn.commit()
+    return {
+        "success": True,
+        "school_name": school_name,
+        "delivery_date": d_str,
+        "inserted_count": inserted_count,
+        "total_cost": total_cost,
+        "voucher_no": v_no,
+        "phase": phase
+    }
+
+
 def get_school_daily_records(conn, school_name, year, month):
     """ទាញយកទិន្នន័យតម្រូវការស្បៀងប្រចាំថ្ងៃរបស់សាលាក្នុងខែដែលបានជ្រើសរើស"""
-    if not school_name or school_name == "គ្មានសាលា":
+    if not school_name or school_name in ["-- ជ្រើសរើសសាលារៀន --", "គ្មានសាលា"]:
         return []
     c = conn.cursor()
     m_str = f"{year:04d}-{month:02d}%"
@@ -1219,7 +1289,7 @@ def apply_template_to_school(conn, school_name, template_id="cycle_1", student_c
     អនុវត្តគំរូស្ដង់ដារ MoEYS SFIS ជូនសាលារៀនជាក់លាក់មួយ
     គណនាបរិមាណគ្រឿងផ្សំតាមចំនួនសិស្ស និងចាប់យកតម្លៃបច្ចុប្បន្នដោយស្វ័យប្រវត្តិ
     """
-    if not school_name or school_name == "គ្មានសាលា":
+    if not school_name or school_name in ["-- ជ្រើសរើសសាលារៀន --", "គ្មានសាលា"]:
         return 0
 
     if template_id not in STANDARD_SFIS_TEMPLATES:
@@ -1431,7 +1501,7 @@ def import_menus_from_2026_workbook(conn, workbook_path="បញ្ជីមុ�
 
 def get_school_menu_overview(conn, school_name):
     """ទាញយកមុខម្ហូបទាំងអស់របស់សាលារៀបតាមថ្ងៃនៃសប្ដាហ៍"""
-    if not school_name or school_name == "គ្មានសាលា":
+    if not school_name or school_name in ["-- ជ្រើសរើសសាលារៀន --", "គ្មានសាលា"]:
         return []
 
     c = conn.cursor()
@@ -1494,7 +1564,7 @@ def get_school_menu_overview(conn, school_name):
 
 def get_menu_by_day(conn, school_name, day_of_week):
     """ស្វែងរកមុខម្ហូបតាមថ្ងៃសម្រាប់សាលាជាក់លាក់"""
-    if not school_name or school_name == "គ្មានសាលា" or not day_of_week:
+    if not school_name or school_name in ["គ្មានសាលា", "-- ជ្រើសរើសសាលារៀន --"] or not day_of_week:
         return None
 
     c = conn.cursor()
@@ -1548,6 +1618,12 @@ def calculate_school_monthly_matrix(conn, school_name, days_per_month=4):
     គណនាតារាងតម្រូវការស្បៀងប្រចាំខែតាមគំរូសន្លឹក «ចំនួនសរុប ខាងកើត»
     ជួរឈរ៖ ល.រ, ថ្ងៃ, មុខម្ហូប, មុខទំនិញ, ប្រភេទ, បរិមាណប្រចាំថ្ងៃ, ចំនួនថ្ងៃហូប, សរុប១ខែ, តម្លៃរាយ, សរុបទឹកប្រាក់
     """
+    if not school_name or school_name in ["គ្មានសាលា", "-- ជ្រើសរើសសាលារៀន --"]:
+        return {
+            "rows": [],
+            "grand_total_cost": 0.0,
+            "total_items": 0
+        }
     menus = get_school_menu_overview(conn, school_name)
     matrix_rows = []
     
@@ -1591,7 +1667,7 @@ def generate_official_menu_excel(conn, school_name, month_name="មីនា", y
     """
     បង្កើតឯកសារ Excel ផ្លូវការស្របតាមសន្លឹក «ចំនួនសរុប ខាងកើត» និងទម្រង់ស្ដង់ដារ MoEYS SFIS
     """
-    if not school_name or school_name == "គ្មានសាលា":
+    if not school_name or school_name in ["-- ជ្រើសរើសសាលារៀន --", "គ្មានសាលា"]:
         wb = openpyxl.Workbook()
         buf = io.BytesIO()
         wb.save(buf)
@@ -1748,6 +1824,16 @@ def generate_official_menu_excel(conn, school_name, month_name="មីនា", y
     return buf.getvalue()
 
 
+# ================= HTML RENDERING HELPER =================
+def render_clean_html(html_str):
+    """
+    បង្ហាញ HTML ដោយសុវត្ថិភាព ធានាថាមិនមាន leading 4+ spaces ដែលបណ្តាលឱ្យ CommonMark បង្ហាញជាផ្ទាំងកូដ Error
+    """
+    dedented = textwrap.dedent(html_str).strip()
+    cleaned_lines = [re.sub(r'^[ ]{4,}', '  ', line) for line in dedented.split('\n')]
+    st.markdown('\n'.join(cleaned_lines), unsafe_allow_html=True)
+
+
 # ================= STREAMLIT UI RENDER FUNCTION =================
 def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, user_school, is_admin,
                                 get_scoped_district_choices, get_scoped_commune_choices, get_scoped_schools, get_school_location_info):
@@ -1766,7 +1852,7 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
         if st.button("🔄 Refresh", key="btn_ref_menu_page", use_container_width=True, help="Refresh ទំព័រមុខម្ហូប"):
             st.rerun()
 
-    st.markdown("""
+    render_clean_html("""
     <div style="background: linear-gradient(135deg, #1e3a8a 0%, #0369a1 100%); color: white; padding: 14px 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
         <div style="font-size: 1.05rem; font-weight: bold; margin-bottom: 4px;">
             🇰🇭 កម្មវិធីផ្តល់អាហារតាមសាលារៀនដោយប្រើប្រាស់កសិផលក្នុងសហគមន៍ (HGSF) - ក្រសួងអប់រំ យុវជន និងកីឡា
@@ -1775,7 +1861,7 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
             យោងតាមគោលការណ៍ណែនាំស្តីពីអាហារូបត្ថម្ភរបស់ប្រព័ន្ធ <b><a href="https://sfis.moeys.gov.kh/users/sign_in" target="_blank" style="color: #fef08a; text-decoration: underline;">MoEYS SFIS</a></b> និងកម្មវិធីស្បៀងអាហារពិភពលោក (WFP)៖ មុខម្ហូបប្រចាំសប្ដាហ៍ត្រូវបានរៀបចំជាវដ្តវិលជុំ (ចន្ទ ដល់ សៅរ៍) ដោយប្រើប្រាស់បន្លែ ត្រី សាច់ ស៊ុត ស្រស់ៗពីកសិករក្នុងសហគមន៍ ធានាបាននូវតុល្យភាពសារធាតុចិញ្ចឹមគ្រប់គ្រាន់សម្រាប់កុមារ។
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """)
 
     # ១. ជួរជ្រើសរើសទីតាំងតៗគ្នា (Cascading: Province -> District -> Commune -> School)
     col_p, col_d, col_c, col_s = st.columns([1, 1, 1, 1.2])
@@ -1810,65 +1896,73 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
     with col_s:
         c_for_s = sel_comm if sel_comm != "-- ទាំងអស់ --" else (user_comm if not is_admin else None)
         school_options = get_scoped_schools(p_for_d, d_for_c, c_for_s, prefix_all=False)
-        if not school_options:
-            school_options = ["គ្មានសាលា"]
+        clean_schools = [s for s in school_options if s not in ["-- ទាំងអស់ --", "គ្មានសាលា", "-- ជ្រើសរើសសាលារៀន --"]]
+        school_select_list = ["-- ជ្រើសរើសសាលារៀន --"] + clean_schools if clean_schools else ["-- ជ្រើសរើសសាលារៀន --"]
         
         def_idx = 0
-        if user_school and user_school in school_options:
-            def_idx = school_options.index(user_school)
+        if user_school and user_school in school_select_list:
+            def_idx = school_select_list.index(user_school)
 
-        if "menu_school" in st.session_state and st.session_state["menu_school"] not in school_options:
-            st.session_state["menu_school"] = school_options[def_idx]
+        if "menu_school" in st.session_state and st.session_state["menu_school"] not in school_select_list:
+            st.session_state["menu_school"] = school_select_list[def_idx]
 
-        sel_school = st.selectbox("សាលារៀន", school_options, key="menu_school")
+        sel_school = st.selectbox("សាលារៀន", school_select_list, key="menu_school")
 
-    if sel_school == "គ្មានសាលា" or not sel_school:
-        st.warning("⚠️ សូមជ្រើសរើសសាលារៀនដើម្បីមើល ឬបញ្ចូលបញ្ជីមុខម្ហូប!")
-        return
+    is_school_selected = bool(sel_school and sel_school not in ["-- ជ្រើសរើសសាលារៀន --", "គ្មានសាលា"])
 
-    # ទាញយកទីតាំងជាក់ស្តែងរបស់សាលា
-    prov_db, dist_db, comm_db, vill_db = get_school_location_info(sel_school)
-    act_prov = prov_db or (sel_prov if sel_prov != "-- ទាំងអស់ --" else "")
-    act_dist = dist_db or (sel_dist if sel_dist != "-- ទាំងអស់ --" else "")
-    act_comm = comm_db or (sel_comm if sel_comm != "-- ទាំងអស់ --" else "")
-
-    # ទាញយកទិន្នន័យមុខម្ហូបបច្ចុប្បន្នរបស់សាលា
-    school_menus = get_school_menu_overview(conn, sel_school)
-    dish_count = len(school_menus)
-    tot_week_cost = sum(m["total_day_cost"] for m in school_menus)
-    tot_month_est = tot_week_cost * 4.0
-    target_st = school_menus[0]["target_students"] if school_menus else 100
+    if is_school_selected:
+        prov_db, dist_db, comm_db, vill_db = get_school_location_info(sel_school)
+        act_prov = prov_db or (sel_prov if sel_prov != "-- ទាំងអស់ --" else "")
+        act_dist = dist_db or (sel_dist if sel_dist != "-- ទាំងអស់ --" else "")
+        act_comm = comm_db or (sel_comm if sel_comm != "-- ទាំងអស់ --" else "")
+        school_menus = get_school_menu_overview(conn, sel_school)
+        dish_count = len(school_menus)
+        tot_week_cost = sum(m["total_day_cost"] for m in school_menus)
+        tot_month_est = tot_week_cost * 4.0
+        target_st = school_menus[0]["target_students"] if school_menus else 100
+        display_school_title = sel_school
+        badge_html = '<span style="background: #dcfce7; color: #166534; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">✅ បានកំណត់មុខម្ហូបរួចរាល់</span>' if dish_count >= 7 else '<span style="background: #fef3c7; color: #92400e; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">⚠️ មិនទាន់គ្រប់ ៧ ថ្ងៃ</span>' if dish_count > 0 else '<span style="background: #fee2e2; color: #991b1b; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">❌ ពុំទាន់មានមុខម្ហូប</span>'
+    else:
+        act_prov = sel_prov if sel_prov != "-- ទាំងអស់ --" else ""
+        act_dist = sel_dist if sel_dist != "-- ទាំងអស់ --" else ""
+        act_comm = sel_comm if sel_comm != "-- ទាំងអស់ --" else ""
+        school_menus = []
+        dish_count = 0
+        tot_week_cost = 0.0
+        tot_month_est = 0.0
+        target_st = 100
+        display_school_title = "គំរូទទេ (សូមជ្រើសរើស ខេត្ត ស្រុក ឃុំ សាលារៀន ខាងលើ)"
+        badge_html = '<span style="background: #f1f5f9; color: #475569; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">💡 គំរូតារាងទទេ</span>'
 
     # បង្ហាញកាតសង្ខេបព័ត៌មានសាលា
-    st.markdown(f"""
+    render_clean_html(f"""
     <div style="background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px 20px; margin-bottom: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
             <div>
-                <span style="font-size: 1.25rem; font-weight: bold; color: #1e293b;">🏫 សាលាបឋមសិក្សា៖ <span style="color: #0284c7;">{sel_school}</span></span>
+                <span style="font-size: 1.25rem; font-weight: bold; color: #1e293b;">🏫 សាលាបឋមសិក្សា៖ <span style="color: #0284c7;">{display_school_title}</span></span>
                 <span style="font-size: 0.9rem; color: #64748b; margin-left: 12px;">📍 ឃុំ៖ <b>{act_comm or 'មិនទាន់បញ្ជាក់'}</b> | ស្រុក៖ <b>{act_dist or 'មិនទាន់បញ្ជាក់'}</b> | ខេត្ត៖ <b>{act_prov or 'មិនទាន់បញ្ជាក់'}</b></span>
             </div>
             <div>
-                {'<span style="background: #dcfce7; color: #166534; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">✅ បានកំណត់មុខម្ហូបរួចរាល់</span>' if dish_count >= 7 else '<span style="background: #fef3c7; color: #92400e; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">⚠️ មិនទាន់គ្រប់ ៧ ថ្ងៃ</span>' if dish_count > 0 else '<span style="background: #fee2e2; color: #991b1b; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">❌ ពុំទាន់មានមុខម្ហូប</span>'}
+                {badge_html}
             </div>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """)
 
     # KPI Metrics
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     with kpi1:
-        st.metric("🍲 មុខម្ហូបក្នុងសប្ដាហ៍", f"{dish_count} មុខ", f"{dish_count}/៧ ថ្ងៃ" if dish_count < 7 else "ពេញលេញ")
+        st.metric("🍲 មុខម្ហូបក្នុងសប្ដាហ៍", f"{dish_count} មុខ", f"{dish_count}/៧ ថ្ងៃ" if (is_school_selected and dish_count < 7) else "ពេញលេញ" if is_school_selected else "គំរូទទេ")
     with kpi2:
         st.metric("👥 សិស្សទទួលទានគោលដៅ", f"{target_st:,} នាក់", "គណនាស្វ័យប្រវត្ត")
     with kpi3:
-        st.metric("💰 ថវិកាស្បៀង ១សប្ដាហ៍", f"{tot_week_cost:,.0f} ៛", f"{(tot_week_cost/target_st if target_st else 0):,.0f} ៛/សិស្ស/សប្ដាហ៍")
+        st.metric("💰 ថវិកាស្បៀង ១សប្ដាហ៍", f"{tot_week_cost:,.0f} ៛", f"{(tot_week_cost/target_st if target_st else 0):,.0f} ៛/សិស្ស/សប្ដាហ៍" if is_school_selected else "គំរូទទេ")
     with kpi4:
-        st.metric("📅 ថវិកាស្បៀង ១ខែ (៤សប្ដាហ៍)", f"{tot_month_est:,.0f} ៛", "ប៉ាន់ស្មានតាមមុខម្ហូប")
+        st.metric("📅 ថវិកាស្បៀង ១ខែ (៤សប្ដាហ៍)", f"{tot_month_est:,.0f} ៛", "ប៉ាន់ស្មានតាមមុខម្ហូប" if is_school_selected else "គំរូទទេ")
 
-    # ៨ ផ្ទាំងបញ្ជា (Tabs)
-    tab_builder, tab_upload, tab_daily_rec, tab_cards, tab_seed, tab_manual, tab_matrix, tab_export = st.tabs([
+    # ៧ ផ្ទាំងបញ្ជា (Tabs)
+    tab_builder, tab_daily_rec, tab_cards, tab_seed, tab_manual, tab_matrix, tab_export = st.tabs([
         "📝 បង្កើតមុខម្ហូបតាមថ្ងៃ MoEYS SFIS",
-        "📤 នាំចូលឯកសារស្បៀង (Upload File)",
         "📋 តារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (Daily Records)",
         "📅 កាលវិភាគមុខម្ហូបប្រចាំសប្ដាហ៍ (Weekly Schedule)",
         "⚡ អនុវត្តគំរូស្ដង់ដារ MoEYS SFIS (One-Click Seed)",
@@ -1879,9 +1973,186 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
 
     # ================= TAB 1: បង្កើតមុខម្ហូបតាមថ្ងៃ MoEYS SFIS =================
     with tab_builder:
-        st.subheader(f"📝 បង្កើតមុខម្ហូបតាមថ្ងៃ និងគណនាតម្រូវការស្បៀង (សាលា៖ {sel_school})")
-        st.caption("រៀបចំមុខម្ហូបប្រចាំថ្ងៃនៃសប្ដាហ៍ (៧ ថ្ងៃ៖ ចន្ទ-អាទិត្យ) ជ្រើសរើសកាលបរិច្ឆេទក្នុងខែ កែសម្រួលមុខទំនិញ បរិមាណ និងបន្ថែមស្បៀងគោលទុកបានយូរនៅដើមខែ ស្របតាមប្រព័ន្ធ MoEYS SFIS")
+        builder_title = f" (សាលា៖ {sel_school})" if is_school_selected else " (គំរូទទេ)"
+        st.subheader(f"📝 បង្កើតមុខម្ហូបតាមថ្ងៃ និងគណនាតម្រូវការស្បៀង{builder_title}")
+        st.caption("រៀបចំមុខម្ហូបប្រចាំថ្ងៃនៃសប្ដាហ៍ (៧ ថ្ងៃ៖ ចន្ទ-អាទិត្យ) ជ្រើសរើសកាលបរិច្ឆេទក្នុងខែ កែសម្រួលមុខទំនិញ បរិមាណ នាំចូលឯកសារស្បៀង និងកត់ត្រាស្បៀងទុកបានយូរ ស្របតាមប្រព័ន្ធ MoEYS SFIS")
 
+        # ---------------- 📤 នាំចូលឯកសារស្បៀង (Upload File) ----------------
+        with st.expander("📤 នាំចូលឯកសារស្បៀងពីខាងក្រៅ (Upload File: PDF, Excel, Word, CSV, រូបភាព)", expanded=False):
+            st.markdown("<div style='font-size: 0.92rem; font-weight: bold; color: #1e3a8a; margin-bottom: 6px;'>ប្រព័ន្ធសម្គាល់ឈ្មោះសាលារៀន ស្រង់កាលបរិច្ឆេទ មុខទំនិញ បរិមាណ និងតម្លៃដោយស្វ័យប្រវត្តិ រួចបញ្ចូលទៅក្នុងបញ្ជីតម្រូវការស្បៀងប្រចាំថ្ងៃ</div>", unsafe_allow_html=True)
+
+            all_known_schools = sorted(list(set(
+                [r[0] for r in conn.cursor().execute("SELECT DISTINCT school_name FROM suppliers WHERE school_name IS NOT NULL AND school_name != ''").fetchall()] +
+                [r[0] for r in conn.cursor().execute("SELECT DISTINCT school_name FROM school_menus WHERE school_name IS NOT NULL AND school_name != ''").fetchall()] +
+                [r[0] for r in conn.cursor().execute("SELECT DISTINCT school_name FROM daily_records WHERE school_name IS NOT NULL AND school_name != ''").fetchall()] +
+                ([sel_school] if is_school_selected else [])
+            )))
+
+            uploaded_food_file = st.file_uploader(
+                "📂 ជ្រើសរើស ឬទម្លាក់ឯកសារនៅទីនេះ (គាំទ្រ PDF, Excel .xlsx/.xls, Word .docx, CSV, រូបភាព .png/.jpg/.jpeg)",
+                type=["pdf", "xlsx", "xls", "docx", "doc", "png", "jpg", "jpeg", "csv"],
+                key="uploader_food_file_input"
+            )
+
+            if uploaded_food_file is not None:
+                parsed_data = parse_uploaded_food_file(
+                    uploaded_food_file,
+                    known_schools=all_known_schools,
+                    default_school=sel_school if is_school_selected else ""
+                )
+
+                det_s = parsed_data["detected_school"] or (sel_school if is_school_selected else (all_known_schools[0] if all_known_schools else ""))
+                det_m = parsed_data["detected_month"]
+                det_y = parsed_data["detected_year"]
+
+                render_clean_html(f"""
+                <div style="background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 10px; padding: 14px 18px; margin-top: 12px; margin-bottom: 15px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <span style="font-size: 1.15rem; font-weight: bold; color: #166534;">🏫 សាលារៀនដែលបានសម្គាល់៖ <span style="color: #0369a1;">{det_s}</span></span>
+                            <span style="background: #dcfce7; color: #15803d; padding: 3px 10px; border-radius: 12px; font-size: 0.82rem; font-weight: bold; margin-left: 10px;">✅ {parsed_data['school_confidence']}</span>
+                        </div>
+                        <div style="font-size: 0.88rem; color: #475569;">
+                            ឯកសារ៖ <b>{parsed_data['filename']}</b> (ប្រភេទ <b>.{parsed_data['file_type'].upper()}</b>)
+                        </div>
+                    </div>
+                </div>
+                """)
+
+                col_cf1, col_cf2, col_cf3 = st.columns([1.8, 1, 1])
+                with col_cf1:
+                    sch_opts = [det_s] + [s for s in all_known_schools if s != det_s]
+                    confirmed_school = st.selectbox("🏫 បញ្ជាក់ឈ្មោះសាលាដែលត្រូវទទួលស្បៀង", sch_opts if sch_opts else ["-- ជ្រើសរើសសាលារៀន --"], index=0, key="sel_confirmed_import_school")
+                with col_cf2:
+                    cf_month_idx = det_m - 1 if 1 <= det_m <= 12 else 10
+                    confirmed_month_name = st.selectbox("📅 ខែ", KHMER_MONTHS, index=cf_month_idx, key="sel_confirmed_import_month")
+                    confirmed_m_num = KHMER_MONTH_TO_NUM.get(confirmed_month_name, det_m)
+                with col_cf3:
+                    confirmed_year = st.number_input("ឆ្នាំ", min_value=2024, max_value=2035, value=det_y, step=1, key="sel_confirmed_import_year")
+
+                if parsed_data["file_type"] in ["png", "jpg", "jpeg", "webp"]:
+                    st.image(parsed_data["file_bytes"], caption=f"🖼️ រូបភាពឯកសារ៖ {parsed_data['filename']}", use_container_width=True)
+                    if not parsed_data["items"]:
+                        st.info("💡 រូបភាពត្រូវបានផ្ទុកជោគជ័យ! លោកអ្នកអាចចុចប៊ូតុងខាងក្រោមដើម្បីបង្កើតតារាងស្បៀងស្ដង់ដារ MoEYS SFIS សម្រាប់សាលានេះ រួចកែសម្រួលតាមរូបភាពបានភ្លាមៗ។")
+                        if st.button("⚡ បង្កើតតារាងស្បៀងស្ដង់ដារ MoEYS SFIS តាមរូបភាពនេះ", key="btn_seed_from_image", type="primary"):
+                            sample_items = []
+                            for d_k in ["ចន្ទ", "អង្គារ", "ពុធ", "ព្រហស្បតិ៍", "សុក្រ", "សៅរ៍", "អាទិត្យ"]:
+                                p_info = DEFAULT_DAY_PRESETS.get(d_k, {})
+                                for ig in p_info.get("ingredients", []):
+                                    sample_items.append({
+                                        "date": f"{confirmed_year:04d}-{confirmed_m_num:02d}-05",
+                                        "item_name": ig["item_name"],
+                                        "category": ig.get("category", "បន្លែ"),
+                                        "unit": ig.get("unit", "1គីឡូ"),
+                                        "quantity": round(float(ig.get("gram_per_student", 20.0)) * 100 / 1000.0, 2) or 2.0,
+                                        "unit_price": get_active_item_price(conn, ig["item_name"], confirmed_school),
+                                        "total_price": 0.0,
+                                        "voucher_no": "001",
+                                        "menu_name": p_info.get("dish_name", "")
+                                    })
+                            parsed_data["items"] = sample_items
+                            st.session_state["cached_import_items"] = sample_items
+                            st.rerun()
+
+                import_items = st.session_state.get("cached_import_items", parsed_data["items"])
+                if import_items:
+                    tot_up_cnt = len(import_items)
+                    tot_up_dates = len(set(it["date"] for it in import_items))
+                    tot_up_cost = sum(it.get("total_price", 0.0) or (it.get("quantity", 0.0) * it.get("unit_price", 0.0)) for it in import_items)
+
+                    um1, um2, um3 = st.columns(3)
+                    with um1:
+                        st.metric("📦 ចំនួនមុខទំនិញដែលបានស្រង់", f"{tot_up_cnt} ជួរ")
+                    with um2:
+                        st.metric("📅 ចំនួនកាលបរិច្ឆេទ", f"{tot_up_dates} ថ្ងៃ")
+                    with um3:
+                        st.metric("💰 ថវិកាសរុបប៉ាន់ស្មាន", f"{tot_up_cost:,.0f} ៛")
+
+                    st.markdown("<div style='font-size: 0.9rem; font-weight: bold; color: #0f172a; margin-top: 10px; margin-bottom: 6px;'>📋 ទិន្នន័យស្បៀងដែលបានស្រង់ (អាចកែប្រែបានក្នុងតារាងផ្ទាល់)៖</div>", unsafe_allow_html=True)
+                    df_editor_data = pd.DataFrame([
+                        {
+                            "កាលបរិច្ឆេទ": it["date"],
+                            "មុខទំនិញ/ស្បៀង": it["item_name"],
+                            "ប្រភេទ": it.get("category") or auto_classify_category(it["item_name"]),
+                            "ឯកតា": it.get("unit", "1គីឡូ"),
+                            "បរិមាណ": float(it.get("quantity") or 0.0),
+                            "តម្លៃរាយ (៛)": float(it.get("unit_price") or get_active_item_price(conn, it["item_name"], confirmed_school)),
+                            "សរុប (៛)": float(it.get("total_price") or (float(it.get("quantity") or 0.0) * float(it.get("unit_price") or 0.0))),
+                            "មុខម្ហូប": it.get("menu_name", ""),
+                            "លេខសក្ខីប័ត្រ": it.get("voucher_no", "")
+                        }
+                        for it in import_items
+                    ])
+                    edited_df = st.data_editor(
+                        df_editor_data,
+                        use_container_width=True,
+                        num_rows="dynamic",
+                        key="editor_upload_food_table"
+                    )
+
+                    st.markdown("---")
+                    col_imp_exec, col_imp_sp = st.columns([2.5, 2])
+                    with col_imp_exec:
+                        if st.button(
+                            f"📥 បញ្ចូលទៅក្នុងបញ្ជីតម្រូវការស្បៀងប្រចាំថ្ងៃ (សាលា៖ {confirmed_school})",
+                            type="primary",
+                            use_container_width=True,
+                            key="btn_exec_import_to_daily_records"
+                        ):
+                            if not confirmed_school or confirmed_school in ["-- ជ្រើសរើសសាលារៀន --", "គ្មានសាលា"]:
+                                st.warning("⚠️ សូមបញ្ជាក់ឈ្មោះសាលារៀនជាមុនសិន!")
+                            else:
+                                c_imp = conn.cursor()
+                                inserted_count = 0
+                                total_imported_cost = 0.0
+
+                                for _, row_val in edited_df.iterrows():
+                                    r_date = str(row_val["កាលបរិច្ឆេទ"]).strip()[:10]
+                                    r_item = str(row_val["មុខទំនិញ/ស្បៀង"]).strip()
+                                    if not r_item or not r_date:
+                                        continue
+                                    r_cat = str(row_val.get("ប្រភេទ", "")).strip() or auto_classify_category(r_item)
+                                    r_qty = float(row_val.get("បរិមាណ") or 0.0)
+                                    r_price = float(row_val.get("តម្លៃរាយ (៛)") or 0.0)
+                                    r_tot = float(row_val.get("សរុប (៛)") or (r_qty * r_price))
+                                    r_menu = str(row_val.get("មុខម្ហូប", "")).strip()
+                                    r_vno = str(row_val.get("លេខសក្ខីប័ត្រ", "")).strip() or get_or_create_school_voucher(conn, confirmed_school, r_date)
+                                    r_phase = determine_phase_for_date(conn, confirmed_school, r_date)
+
+                                    total_imported_cost += r_tot
+
+                                    ex_rec = c_imp.execute("""
+                                        SELECT id FROM daily_records
+                                        WHERE school_name=? AND date=? AND item_name=?
+                                    """, (confirmed_school, r_date, r_item)).fetchone()
+
+                                    if ex_rec:
+                                        c_imp.execute("""
+                                            UPDATE daily_records
+                                            SET quantity=?, unit_price=?, total_price=?, phase=?, voucher_no=?, consumption_date=?, category=?, menu_name=?
+                                            WHERE id=?
+                                        """, (r_qty, r_price, r_tot, r_phase, r_vno, r_date, r_cat, r_menu, ex_rec[0]))
+                                    else:
+                                        c_imp.execute("""
+                                            INSERT INTO daily_records (
+                                                date, school_name, item_name, phase, quantity, unit_price, total_price, voucher_no, consumption_date, category, menu_name
+                                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        """, (r_date, confirmed_school, r_item, r_phase, r_qty, r_price, r_tot, r_vno, r_date, r_cat, r_menu))
+                                    inserted_count += 1
+
+                                conn.commit()
+                                st.success(f"""
+                                🎉 **នាំចូលទិន្នន័យស្បៀងជោគជ័យ!**
+                                - 🏫 សាលាបឋមសិក្សា៖ **{confirmed_school}**
+                                - 📋 ចំនួនទិន្នន័យស្បៀងបានបញ្ចូល៖ **{inserted_count} ជួរ** ចូលក្នុងតារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (Daily Records)
+                                - 💰 ថវិកាសរុប៖ **{total_imported_cost:,.0f} ៛**
+                                """)
+                                st.balloons()
+                                st.rerun()
+                else:
+                    st.warning("⚠️ មិនទាន់មានទិន្នន័យស្បៀងដែលបានស្រង់នៅឡើយទេ។ សូមពិនិត្យមើលឯកសារដែលបានបញ្ចូល ឬជ្រើសរើសឯកសារផ្សេង។")
+
+        # ---------------- កាលបរិច្ឆេទ និងព័ត៌មានទូទៅនៃខែ ----------------
         col_b_m, col_b_y, col_b_st, col_b_act = st.columns([1.2, 1, 1.2, 1.6])
         with col_b_m:
             sel_b_month_name = st.selectbox("📅 ជ្រើសរើសខែ", KHMER_MONTHS, index=10, key="bldr_month_sel")
@@ -1893,96 +2164,63 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
         with col_b_act:
             st.write("")
             if st.button("⚡ ផ្ទុកគំរូស្ដង់ដារ MoEYS SFIS (៧ ថ្ងៃ)", use_container_width=True, key="btn_bldr_seed_defaults"):
-                for d_k, d_v in DEFAULT_DAY_PRESETS.items():
-                    st.session_state[f"bldr_dish_name_{sel_school}_{d_k}"] = d_v["dish_name"]
-                    st.session_state[f"bldr_ings_{sel_school}_{d_k}"] = [
-                        {
-                            "category": ig.get("category", "បន្លែ"),
-                            "item_name": ig["item_name"],
-                            "unit": ig.get("unit", "1គីឡូ"),
-                            "gram_per_student": float(ig.get("gram_per_student", 20.0)),
-                            "qty_per_100": float(ig.get("qty_per_100", 2.0)),
-                            "unit_price": get_active_item_price(conn, ig["item_name"], sel_school, act_comm)
-                        }
-                        for ig in d_v["ingredients"]
-                    ]
-                st.success("✅ បានផ្ទុកគំរូស្ដង់ដារ MoEYS SFIS ទាំង ៧ ថ្ងៃជោគជ័យ!")
-                st.rerun()
-
-        # ទាញយកកាលបរិច្ឆេទតាមថ្ងៃនៃសប្ដាហ៍សម្រាប់ខែនេះ
-        month_weekday_dates = get_month_weekday_dates(b_year_num, b_month_num)
-
-        # រៀបចំ data structure សម្រាប់រក្សាទុក
-        builder_days_payload = {}
-        catalog_item_names = [p["name"] for p in SUPPLIER_PRODUCT_CATALOG]
-
-        # បង្ហាញកាតមុខម្ហូបទាំង ៧ ថ្ងៃ (ចន្ទ ដល់ អាទិត្យ) តាមទម្រង់ MoEYS SFIS ដូចរូបភាពគំរូ
-        for d_name in KHMER_DAYS_OF_WEEK:
-            def_preset = DEFAULT_DAY_PRESETS.get(d_name, {"dish_name": "សម្លកកូរសាច់ជ្រូក", "ingredients": []})
-            existing_d_menu = next((m for m in school_menus if m["day_of_week"] == d_name), None)
-
-            day_ing_key = f"bldr_ings_{sel_school}_{d_name}"
-            day_dish_key = f"bldr_dish_name_{sel_school}_{d_name}"
-            day_custom_dates_key = f"custom_dates_{sel_school}_{d_name}_{b_year_num}_{b_month_num}"
-
-            if day_custom_dates_key not in st.session_state:
-                st.session_state[day_custom_dates_key] = []
-
-            if day_ing_key not in st.session_state:
-                if existing_d_menu and existing_d_menu.get("ingredients"):
-                    st.session_state[day_ing_key] = [
-                        {
-                            "category": ig.get("category") or auto_classify_category(ig.get("item_name", "")),
-                            "item_name": ig.get("item_name"),
-                            "unit": ig.get("unit") or "1គីឡូ",
-                            "gram_per_student": float(ig.get("gram_per_student") or 20.0),
-                            "qty_per_100": float(ig.get("total_qty") or 2.0) / max(1, (b_target_st / 100.0)),
-                            "unit_price": float(ig.get("unit_price") or 0.0)
-                        }
-                        for ig in existing_d_menu["ingredients"]
-                    ]
+                if not is_school_selected:
+                    st.warning("⚠️ សូមជ្រើសរើសសាលារៀនជាមុនសិនដើម្បីផ្ទុកគំរូ!")
                 else:
-                    st.session_state[day_ing_key] = [
-                        {
-                            "category": ig.get("category", "បន្លែ"),
-                            "item_name": ig["item_name"],
-                            "unit": ig.get("unit", "1គីឡូ"),
-                            "gram_per_student": float(ig.get("gram_per_student", 20.0)),
-                            "qty_per_100": float(ig.get("qty_per_100", 2.0)),
-                            "unit_price": get_active_item_price(conn, ig["item_name"], sel_school, act_comm)
-                        }
-                        for ig in def_preset.get("ingredients", [])
-                    ]
+                    for d_k, d_v in DEFAULT_DAY_PRESETS.items():
+                        st.session_state[f"bldr_dish_name_{sel_school}_{d_k}"] = d_v["dish_name"]
+                        st.session_state[f"bldr_ings_{sel_school}_{d_k}"] = [
+                            {
+                                "category": ig.get("category", "បន្លែ"),
+                                "item_name": ig["item_name"],
+                                "unit": ig.get("unit", "1គីឡូ"),
+                                "gram_per_student": float(ig.get("gram_per_student", 20.0)),
+                                "qty_per_100": float(ig.get("qty_per_100", 2.0)),
+                                "unit_price": get_active_item_price(conn, ig["item_name"], sel_school, act_comm)
+                            }
+                            for ig in d_v["ingredients"]
+                        ]
+                    st.success("✅ បានផ្ទុកគំរូស្ដង់ដារ MoEYS SFIS ទាំង ៧ ថ្ងៃជោគជ័យ!")
+                    st.rerun()
 
-            if day_dish_key not in st.session_state:
-                st.session_state[day_dish_key] = existing_d_menu["menu_name"] if existing_d_menu else def_preset["dish_name"]
+        # ប្រសិនបើមិនទាន់ជ្រើសរើសសាលា បង្ហាញត្រឹមគំរូតារាងទទេ
+        if not is_school_selected:
+            st.info("💡 **គំរូតារាងទទេ៖** សូមជ្រើសរើស **ខេត្ត ស្រុក ឃុំ និង សាលារៀន** ខាងលើ ដើម្បីបង្កើត និងកែសម្រួលមុខម្ហូបប្រចាំថ្ងៃនៃសប្ដាហ៍។")
+            empty_bldr_df = pd.DataFrame(columns=[
+                "កាលបរិច្ឆេទ", "ថ្ងៃនៃសប្ដាហ៍", "មុខម្ហូប", "ប្រភេទស្បៀង", "មុខទំនិញ", "ឯកតា", "បរិមាណ", "តម្លៃរាយ (៛)", "សរុប (៛)"
+            ])
+            st.dataframe(empty_bldr_df, use_container_width=True, hide_index=True)
+            builder_days_payload = {}
+        else:
+            month_weekday_dates = get_month_weekday_dates(b_year_num, b_month_num)
+            builder_days_payload = {}
+            catalog_item_names = [p["name"] for p in SUPPLIER_PRODUCT_CATALOG]
 
-            # UI Box container styled exactly like MoEYS SFIS screenshot
-            st.markdown(f"""
-            <div style="background-color: #cbe3e7; border: 1.5px solid #8cb9c5; border-radius: 8px; padding: 10px 16px; margin-top: 14px; margin-bottom: 6px;">
-                <div style="font-weight: bold; font-size: 1.1rem; color: #0f172a;">
-                    📅 ថ្ងៃ{d_name}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            for d_name in KHMER_DAYS_OF_WEEK:
+                def_preset = DEFAULT_DAY_PRESETS.get(d_name, {"dish_name": "សម្លកកូរសាច់ជ្រូក", "ingredients": []})
+                existing_d_menu = next((m for m in school_menus if m["day_of_week"] == d_name), None)
 
-            col_d_left, col_d_mid, col_d_right = st.columns([1.3, 1.4, 2.5])
+                day_ing_key = f"bldr_ings_{sel_school}_{d_name}"
+                day_dish_key = f"bldr_dish_name_{sel_school}_{d_name}"
+                day_custom_dates_key = f"custom_dates_{sel_school}_{d_name}_{b_year_num}_{b_month_num}"
 
-            with col_d_left:
-                use_preset = st.checkbox("ជ្រើសមុខម្ហូបមានស្រាប់", value=True, key=f"chk_preset_{d_name}")
-                if use_preset:
-                    preset_keys = list(SFIS_PRESET_DISHES.keys())
-                    cur_val = st.session_state[day_dish_key]
-                    p_idx = preset_keys.index(cur_val) if cur_val in preset_keys else 0
-                    chosen_p = st.selectbox(
-                        "មុខម្ហូប MoEYS SFIS",
-                        preset_keys,
-                        index=p_idx,
-                        key=f"sel_preset_{d_name}",
-                        label_visibility="collapsed"
-                    )
-                    if chosen_p != st.session_state[day_dish_key]:
-                        st.session_state[day_dish_key] = chosen_p
+                if day_custom_dates_key not in st.session_state:
+                    st.session_state[day_custom_dates_key] = []
+
+                if day_ing_key not in st.session_state:
+                    if existing_d_menu and existing_d_menu.get("ingredients"):
+                        st.session_state[day_ing_key] = [
+                            {
+                                "category": ig.get("category") or auto_classify_category(ig.get("item_name", "")),
+                                "item_name": ig.get("item_name"),
+                                "unit": ig.get("unit") or "1គីឡូ",
+                                "gram_per_student": float(ig.get("gram_per_student") or 20.0),
+                                "qty_per_100": float(ig.get("total_qty") or 2.0) / max(1, (b_target_st / 100.0)),
+                                "unit_price": float(ig.get("unit_price") or 0.0)
+                            }
+                            for ig in existing_d_menu["ingredients"]
+                        ]
+                    else:
                         st.session_state[day_ing_key] = [
                             {
                                 "category": ig.get("category", "បន្លែ"),
@@ -1992,206 +2230,244 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                                 "qty_per_100": float(ig.get("qty_per_100", 2.0)),
                                 "unit_price": get_active_item_price(conn, ig["item_name"], sel_school, act_comm)
                             }
-                            for ig in SFIS_PRESET_DISHES[chosen_p]["ingredients"]
+                            for ig in def_preset.get("ingredients", [])
                         ]
-                        st.rerun()
 
-                cur_dish_name = st.text_input(
-                    "ឈ្មោះមុខម្ហូប",
-                    value=st.session_state[day_dish_key],
-                    key=f"inp_dish_{d_name}",
-                    label_visibility="collapsed"
-                )
-                st.session_state[day_dish_key] = cur_dish_name
+                if day_dish_key not in st.session_state:
+                    st.session_state[day_dish_key] = existing_d_menu["menu_name"] if existing_d_menu else def_preset["dish_name"]
 
-            with col_d_mid:
-                st.markdown("<div style='font-size: 0.85rem; font-weight: bold; color: #1e3a8a; margin-bottom: 4px;'>កាលបរិច្ឆេទ និងចំនួនសិស្ស៖</div>", unsafe_allow_html=True)
-                dates_for_day = month_weekday_dates.get(d_name, []) + st.session_state[day_custom_dates_key]
-                day_active_dates = []
+                render_clean_html(f"""
+                <div style="background-color: #cbe3e7; border: 1.5px solid #8cb9c5; border-radius: 8px; padding: 10px 16px; margin-top: 14px; margin-bottom: 6px;">
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #0f172a;">
+                        📅 ថ្ងៃ{d_name}
+                    </div>
+                </div>
+                """)
 
-                for dt in dates_for_day:
-                    c_dt1, c_dt2 = st.columns([2.3, 1.2])
-                    with c_dt1:
-                        chk_dt = st.checkbox(dt["label"], value=True, key=f"dt_chk_{d_name}_{dt['date_str']}")
-                    with c_dt2:
-                        st_cnt = st.number_input(
-                            "",
-                            min_value=1,
-                            max_value=5000,
-                            value=b_target_st,
-                            step=1,
-                            key=f"st_cnt_{d_name}_{dt['date_str']}",
+                col_d_left, col_d_mid, col_d_right = st.columns([1.3, 1.4, 2.5])
+
+                with col_d_left:
+                    use_preset = st.checkbox("ជ្រើសមុខម្ហូបមានស្រាប់", value=True, key=f"chk_preset_{d_name}")
+                    if use_preset:
+                        preset_keys = list(SFIS_PRESET_DISHES.keys())
+                        cur_val = st.session_state[day_dish_key]
+                        p_idx = preset_keys.index(cur_val) if cur_val in preset_keys else 0
+                        chosen_p = st.selectbox(
+                            "មុខម្ហូប MoEYS SFIS",
+                            preset_keys,
+                            index=p_idx,
+                            key=f"sel_preset_{d_name}",
                             label_visibility="collapsed"
                         )
-                    if chk_dt:
-                        day_active_dates.append({
-                            "date": dt["date_str"],
-                            "label": dt["label"],
-                            "students": st_cnt
-                        })
-
-                # ប៊ូតុងបន្ថែម ឬជ្រើសរើសកាលបរិច្ឆេទបន្ថែមដោយដៃ (Date Picker)
-                with st.popover(f"➕ បន្ថែមកាលបរិច្ឆេទថ្ងៃ{d_name}"):
-                    st.caption(f"ជ្រើសរើសកាលបរិច្ឆេទជាក់លាក់បន្ថែមសម្រាប់ថ្ងៃ{d_name}")
-                    new_custom_d = st.date_input("កាលបរិច្ឆេទ", value=date(b_year_num, b_month_num, 1), key=f"inp_dt_pick_{d_name}")
-                    if st.button(f"បញ្ចូលកាលបរិច្ឆេទនេះចូលថ្ងៃ{d_name}", key=f"btn_confirm_add_dt_{d_name}"):
-                        c_d_str = new_custom_d.strftime("%Y-%m-%d")
-                        c_lbl = f"{to_khmer_digits(new_custom_d.day)} {KHMER_MONTHS[new_custom_d.month - 1]} {to_khmer_digits(new_custom_d.year)}"
-                        if not any(x["date_str"] == c_d_str for x in st.session_state[day_custom_dates_key]):
-                            st.session_state[day_custom_dates_key].append({
-                                "date_str": c_d_str,
-                                "label": c_lbl,
-                                "day_num": new_custom_d.day
-                            })
+                        if chosen_p != st.session_state[day_dish_key]:
+                            st.session_state[day_dish_key] = chosen_p
+                            st.session_state[day_ing_key] = [
+                                {
+                                    "category": ig.get("category", "បន្លែ"),
+                                    "item_name": ig["item_name"],
+                                    "unit": ig.get("unit", "1គីឡូ"),
+                                    "gram_per_student": float(ig.get("gram_per_student", 20.0)),
+                                    "qty_per_100": float(ig.get("qty_per_100", 2.0)),
+                                    "unit_price": get_active_item_price(conn, ig["item_name"], sel_school, act_comm)
+                                }
+                                for ig in SFIS_PRESET_DISHES[chosen_p]["ingredients"]
+                            ]
                             st.rerun()
 
-            with col_d_right:
-                st.markdown("<div style='font-size: 0.85rem; font-weight: bold; color: #1e3a8a; margin-bottom: 4px;'>គ្រឿងផ្សំ និងប្រភេទស្បៀង (បញ្ចូល/កែប្រែបាន)៖</div>", unsafe_allow_html=True)
-                cur_ings = st.session_state[day_ing_key]
-                processed_ings = []
-                del_idx = None
+                    cur_dish_name = st.text_input(
+                        "ឈ្មោះមុខម្ហូប",
+                        value=st.session_state[day_dish_key],
+                        key=f"inp_dish_{d_name}",
+                        label_visibility="collapsed"
+                    )
+                    st.session_state[day_dish_key] = cur_dish_name
 
-                for idx, ig in enumerate(cur_ings):
-                    c_c1, c_c2, c_c3, c_c4 = st.columns([1.2, 1.8, 1.0, 0.4])
-                    with c_c1:
-                        cat_list = SFIS_CATEGORIES
-                        c_idx = cat_list.index(ig["category"]) if ig["category"] in cat_list else 0
-                        sel_cat = st.selectbox(
-                            "",
-                            cat_list,
-                            index=c_idx,
-                            key=f"cat_{d_name}_{idx}",
-                            label_visibility="collapsed"
-                        )
-                        ig["category"] = sel_cat
+                with col_d_mid:
+                    st.markdown("<div style='font-size: 0.85rem; font-weight: bold; color: #1e3a8a; margin-bottom: 4px;'>កាលបរិច្ឆេទ និងចំនួនសិស្ស៖</div>", unsafe_allow_html=True)
+                    dates_for_day = month_weekday_dates.get(d_name, []) + st.session_state[day_custom_dates_key]
+                    day_active_dates = []
 
-                    with c_c2:
-                        cur_i_name = ig["item_name"]
-                        item_opts = [cur_i_name] + [n for n in catalog_item_names if n != cur_i_name]
-                        sel_item = st.selectbox(
-                            "",
-                            item_opts,
-                            index=0,
-                            key=f"item_{d_name}_{idx}",
-                            label_visibility="collapsed"
-                        )
-                        ig["item_name"] = sel_item
+                    for dt in dates_for_day:
+                        c_dt1, c_dt2 = st.columns([2.3, 1.2])
+                        with c_dt1:
+                            chk_dt = st.checkbox(dt["label"], value=True, key=f"dt_chk_{d_name}_{dt['date_str']}")
+                        with c_dt2:
+                            st_cnt = st.number_input(
+                                "",
+                                min_value=1,
+                                max_value=5000,
+                                value=b_target_st,
+                                step=1,
+                                key=f"st_cnt_{d_name}_{dt['date_str']}",
+                                label_visibility="collapsed"
+                            )
+                        if chk_dt:
+                            day_active_dates.append({
+                                "date": dt["date_str"],
+                                "label": dt["label"],
+                                "students": st_cnt
+                            })
 
-                    with c_c3:
-                        u_match = next((p["unit"] for p in SUPPLIER_PRODUCT_CATALOG if p["name"] == sel_item), ig.get("unit", "1គីឡូ"))
-                        g_std = ig.get("gram_per_student", 20.0)
-                        if "គ្រាប់" in u_match:
-                            calc_qty = round(b_target_st * g_std, 1)
-                        else:
-                            calc_qty = round((b_target_st * g_std) / 1000.0, 2)
-                            if calc_qty <= 0:
-                                calc_qty = round(ig.get("qty_per_100", 1.0) * (b_target_st / 100.0), 2)
-                        
-                        qty_val = st.number_input(
-                            "",
-                            min_value=0.01,
-                            value=max(0.01, float(ig.get("qty_per_day", calc_qty))),
-                            step=0.5,
-                            key=f"qty_{d_name}_{idx}",
-                            label_visibility="collapsed"
-                        )
-                        ig["qty_per_day"] = qty_val
+                    with st.popover(f"➕ បន្ថែមកាលបរិច្ឆេទថ្ងៃ{d_name}"):
+                        st.caption(f"ជ្រើសរើសកាលបរិច្ឆេទជាក់លាក់បន្ថែមសម្រាប់ថ្ងៃ{d_name}")
+                        new_custom_d = st.date_input("កាលបរិច្ឆេទ", value=date(b_year_num, b_month_num, 1), key=f"inp_dt_pick_{d_name}")
+                        if st.button(f"បញ្ចូលកាលបរិច្ឆេទនេះចូលថ្ងៃ{d_name}", key=f"btn_confirm_add_dt_{d_name}"):
+                            c_d_str = new_custom_d.strftime("%Y-%m-%d")
+                            c_lbl = f"{to_khmer_digits(new_custom_d.day)} {KHMER_MONTHS[new_custom_d.month - 1]} {to_khmer_digits(new_custom_d.year)}"
+                            if not any(x["date_str"] == c_d_str for x in st.session_state[day_custom_dates_key]):
+                                st.session_state[day_custom_dates_key].append({
+                                    "date_str": c_d_str,
+                                    "label": c_lbl,
+                                    "day_num": new_custom_d.day
+                                })
+                                st.rerun()
 
-                    with c_c4:
-                        if st.button("🗑️", key=f"btn_del_ig_{d_name}_{idx}", help=f"លុបមុខទំនិញ «{cur_i_name}»"):
-                            del_idx = idx
+                with col_d_right:
+                    st.markdown("<div style='font-size: 0.85rem; font-weight: bold; color: #1e3a8a; margin-bottom: 4px;'>គ្រឿងផ្សំ និងប្រភេទស្បៀង (បញ្ចូល/កែប្រែបាន)៖</div>", unsafe_allow_html=True)
+                    cur_ings = st.session_state[day_ing_key]
+                    processed_ings = []
+                    del_idx = None
 
-                    u_price = get_active_item_price(conn, sel_item, sel_school, act_comm)
-                    processed_ings.append({
-                        "category": sel_cat,
-                        "item_name": sel_item,
-                        "unit": u_match,
-                        "gram_per_student": g_std,
-                        "qty_per_day": qty_val,
-                        "unit_price": u_price,
-                        "total_cost": qty_val * u_price
-                    })
+                    for idx, ig in enumerate(cur_ings):
+                        c_c1, c_c2, c_c3, c_c4 = st.columns([1.2, 1.8, 1.0, 0.4])
+                        with c_c1:
+                            cat_list = SFIS_CATEGORIES
+                            c_idx = cat_list.index(ig["category"]) if ig["category"] in cat_list else 0
+                            sel_cat = st.selectbox(
+                                "",
+                                cat_list,
+                                index=c_idx,
+                                key=f"cat_{d_name}_{idx}",
+                                label_visibility="collapsed"
+                            )
+                            ig["category"] = sel_cat
 
-                if del_idx is not None:
-                    st.session_state[day_ing_key].pop(del_idx)
-                    st.rerun()
+                        with c_c2:
+                            cur_i_name = ig["item_name"]
+                            item_opts = [cur_i_name] + [n for n in catalog_item_names if n != cur_i_name]
+                            sel_item = st.selectbox(
+                                "",
+                                item_opts,
+                                index=0,
+                                key=f"item_{d_name}_{idx}",
+                                label_visibility="collapsed"
+                            )
+                            ig["item_name"] = sel_item
 
-                # Action buttons to add ingredients
-                c_act_l, c_act_r = st.columns([1, 1.4])
-                with c_act_l:
-                    with st.popover(f"➕ ជ្រើសមុខទំនិញថ្មី"):
-                        pop_cat = st.selectbox("ប្រភេទស្បៀង", SFIS_CATEGORIES, key=f"pop_cat_{d_name}")
-                        pop_item = st.selectbox("ឈ្មោះទំនិញ (៦១ មុខ)", catalog_item_names, key=f"pop_item_{d_name}")
-                        pop_unit = next((p["unit"] for p in SUPPLIER_PRODUCT_CATALOG if p["name"] == pop_item), "1គីឡូ")
-                        pop_qty = st.number_input("បរិមាណ", min_value=0.1, value=2.0 if "គីឡូ" in pop_unit else 35.0, key=f"pop_qty_{d_name}")
-                        if st.button(f"បញ្ចូលមុខទំនិញនេះ", key=f"btn_pop_add_{d_name}"):
+                        with c_c3:
+                            u_match = next((p["unit"] for p in SUPPLIER_PRODUCT_CATALOG if p["name"] == sel_item), ig.get("unit", "1គីឡូ"))
+                            g_std = ig.get("gram_per_student", 20.0)
+                            if "គ្រាប់" in u_match:
+                                calc_qty = round(b_target_st * g_std, 1)
+                            else:
+                                calc_qty = round((b_target_st * g_std) / 1000.0, 2)
+                                if calc_qty <= 0:
+                                    calc_qty = round(ig.get("qty_per_100", 1.0) * (b_target_st / 100.0), 2)
+                            
+                            qty_val = st.number_input(
+                                "",
+                                min_value=0.01,
+                                value=max(0.01, float(ig.get("qty_per_day", calc_qty))),
+                                step=0.5,
+                                key=f"qty_{d_name}_{idx}",
+                                label_visibility="collapsed"
+                            )
+                            ig["qty_per_day"] = qty_val
+
+                        with c_c4:
+                            if st.button("🗑️", key=f"btn_del_ig_{d_name}_{idx}", help=f"លុបមុខទំនិញ «{cur_i_name}»"):
+                                del_idx = idx
+
+                        u_price = get_active_item_price(conn, sel_item, sel_school, act_comm)
+                        processed_ings.append({
+                            "category": sel_cat,
+                            "item_name": sel_item,
+                            "unit": u_match,
+                            "gram_per_student": g_std,
+                            "qty_per_day": qty_val,
+                            "unit_price": u_price,
+                            "total_cost": qty_val * u_price
+                        })
+
+                    if del_idx is not None:
+                        st.session_state[day_ing_key].pop(del_idx)
+                        st.rerun()
+
+                    c_act_l, c_act_r = st.columns([1, 1.4])
+                    with c_act_l:
+                        with st.popover(f"➕ ជ្រើសមុខទំនិញថ្មី"):
+                            pop_cat = st.selectbox("ប្រភេទស្បៀង", SFIS_CATEGORIES, key=f"pop_cat_{d_name}")
+                            pop_item = st.selectbox("ឈ្មោះទំនិញ (៦១ មុខ)", catalog_item_names, key=f"pop_item_{d_name}")
+                            pop_unit = next((p["unit"] for p in SUPPLIER_PRODUCT_CATALOG if p["name"] == pop_item), "1គីឡូ")
+                            pop_qty = st.number_input("បរិមាណ", min_value=0.1, value=2.0 if "គីឡូ" in pop_unit else 35.0, key=f"pop_qty_{d_name}")
+                            if st.button(f"បញ្ចូលមុខទំនិញនេះ", key=f"btn_pop_add_{d_name}"):
+                                st.session_state[day_ing_key].append({
+                                    "category": pop_cat,
+                                    "item_name": pop_item,
+                                    "unit": pop_unit,
+                                    "gram_per_student": (pop_qty * 1000.0 / b_target_st) if "គីឡូ" in pop_unit else (pop_qty / b_target_st),
+                                    "qty_per_100": (pop_qty / (b_target_st / 100.0)),
+                                    "qty_per_day": pop_qty,
+                                    "unit_price": get_active_item_price(conn, pop_item, sel_school, act_comm)
+                                })
+                                st.rerun()
+
+                    with c_act_r:
+                        if st.button(f"បន្ថែមមុខម្ហូបសម្រាប់ថ្ងៃ{d_name} ＋", key=f"btn_add_item_fast_{d_name}", use_container_width=True):
                             st.session_state[day_ing_key].append({
-                                "category": pop_cat,
-                                "item_name": pop_item,
-                                "unit": pop_unit,
-                                "gram_per_student": (pop_qty * 1000.0 / b_target_st) if "គីឡូ" in pop_unit else (pop_qty / b_target_st),
-                                "qty_per_100": (pop_qty / (b_target_st / 100.0)),
-                                "qty_per_day": pop_qty,
-                                "unit_price": get_active_item_price(conn, pop_item, sel_school, act_comm)
+                                "category": "បន្លែ",
+                                "item_name": "ស្ពៃក្រញាញ់",
+                                "unit": "1គីឡូ",
+                                "gram_per_student": 20.0,
+                                "qty_per_100": 2.0,
+                                "qty_per_day": 2.0,
+                                "unit_price": get_active_item_price(conn, "ស្ពៃក្រញាញ់", sel_school, act_comm)
                             })
                             st.rerun()
 
-                with c_act_r:
-                    if st.button(f"បន្ថែមមុខម្ហូបសម្រាប់ថ្ងៃ{d_name} ＋", key=f"btn_add_item_fast_{d_name}", use_container_width=True):
-                        st.session_state[day_ing_key].append({
-                            "category": "បន្លែ",
-                            "item_name": "ស្ពៃក្រញាញ់",
-                            "unit": "1គីឡូ",
-                            "gram_per_student": 20.0,
-                            "qty_per_100": 2.0,
-                            "qty_per_day": 2.0,
-                            "unit_price": get_active_item_price(conn, "ស្ពៃក្រញាញ់", sel_school, act_comm)
-                        })
-                        st.rerun()
+                builder_days_payload[d_name] = {
+                    "day_name": d_name,
+                    "dish_name": cur_dish_name,
+                    "meal_type": "អាហារពេលព្រឹក",
+                    "target_students": b_target_st,
+                    "ingredients": processed_ings,
+                    "active_dates": day_active_dates
+                }
 
-            builder_days_payload[d_name] = {
-                "day_name": d_name,
-                "dish_name": cur_dish_name,
-                "meal_type": "អាហារពេលព្រឹក",
-                "target_students": b_target_st,
-                "ingredients": processed_ings,
-                "active_dates": day_active_dates
-            }
-
-        # ================= ស្បៀងគោលទុកបានយូរ នៅថ្ងៃដើមខែ =================
+        # ================= ស្បៀងទុកបានយូរ (ផ្គត់ផ្គង់នៅថ្ងៃដើមខែ) =================
         st.markdown("---")
-        st.markdown("""
+        render_clean_html("""
         <div style="background: linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 100%); border: 1.5px solid #7dd3fc; border-radius: 12px; padding: 18px 22px; margin-top: 15px; margin-bottom: 20px;">
             <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
                 <span style="font-size: 1.5rem;">🌾</span>
-                <span style="font-size: 1.15rem; font-weight: bold; color: #0369a1;">ស្បៀងគោលទុកបានយូរ (ផ្គត់ផ្គង់នៅថ្ងៃដើមខែ)</span>
+                <span style="font-size: 1.15rem; font-weight: bold; color: #0369a1;">ស្បៀងទុកបានយូរ (ផ្គត់ផ្គង់នៅថ្ងៃដើមខែ)</span>
             </div>
             <div style="font-size: 0.88rem; color: #334155;">
-                យោងតាមគោលការណ៍ណែនាំ <b>MoEYS SFIS</b> និងកម្មវិធីស្បៀងអាហារពិភពលោក (WFP)៖ មុខទំនិញស្បៀងគោលដែលទុកបានយូរ (<b>អង្ករ, ប្រេងឆា, អំបិលអ៊ីយ៉ូត, ទឹកត្រី</b>) ត្រូវបានផ្គត់ផ្គង់ និងបញ្ជាទិញជាដុំ <b>នៅថ្ងៃដើមខែ</b> សម្រាប់ទុកប្រើប្រាស់ពេញមួយខែ។ នៅពេលចុចរក្សាទុក ប្រព័ន្ធនឹងបង្កើតកំណត់ត្រាតម្រូវការស្បៀងប្រចាំថ្ងៃ (Daily Records) នៅថ្ងៃដើមខែនេះដោយស្វ័យប្រវត្តិ។
+                យោងតាមគោលការណ៍ណែនាំ <b>MoEYS SFIS</b> និងកម្មវិធីស្បៀងអាហារពិភពលោក (WFP)៖ មុខទំនិញស្បៀងគោលដែលទុកបានយូរ (<b>អង្ករ, ប្រេងឆា, អំបិលអ៊ីយ៉ូត, ទឹកត្រី/ទឹកស៊ីអ៊ីវ</b>) ត្រូវបានផ្គត់ផ្គង់ និងបញ្ជាទិញជាដុំ <b>នៅថ្ងៃដើមខែ</b> សម្រាប់ទុកប្រើប្រាស់ពេញមួយខែ។ នៅពេលចុចរក្សាទុក ប្រព័ន្ធនឹងបង្កើតកំណត់ត្រាតម្រូវការស្បៀងប្រចាំថ្ងៃ (Daily Records) នៅថ្ងៃដើមខែនេះដោយស្វ័យប្រវត្តិ។
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
         col_st1, col_st2, col_st3 = st.columns([1.2, 1.2, 2.5])
         with col_st1:
-            include_staples = st.checkbox("✅ បញ្ចូលស្បៀងគោលទុកបានយូរនៅដើមខែ", value=True, key="chk_include_staples")
+            include_staples = st.checkbox("✅ កត់ត្រាស្បៀងទុកបានយូរ", value=True, key="chk_include_staples")
         with col_st2:
             def_start_date = f"{b_year_num:04d}-{b_month_num:02d}-01"
             staple_deliv_date = st.text_input("📅 កាលបរិច្ឆេទចែកផ្ដល់ (ដើមខែ)", value=def_start_date, key="inp_staple_deliv_date")
         with col_st3:
-            staple_feeding_days = st.number_input("ចំនួនថ្ងៃហូបអាហារក្នុងខែ (សម្រាប់គណនាស្បៀងគោល)", min_value=1, max_value=31, value=24, step=1, key="inp_staple_feeding_days")
+            staple_feeding_days = st.number_input("ចំនួនថ្ងៃហូបអាហារក្នុងខែ (សម្រាប់គណនាស្បៀងទុកបានយូរ)", min_value=1, max_value=31, value=24, step=1, key="inp_staple_feeding_days")
 
         rice_kg = round((b_target_st * 100.0 * staple_feeding_days) / 1000.0, 1)
         oil_lit = round((b_target_st * 10.0 * staple_feeding_days) / 1000.0, 1)
         salt_kg = round((b_target_st * 3.0 * staple_feeding_days) / 1000.0, 1)
         sauce_lit = round((b_target_st * 10.0 * staple_feeding_days) / 1000.0, 1)
 
-        p_rice = get_active_item_price(conn, "អង្ករ", sel_school, act_comm) or 3000.0
-        p_oil = get_active_item_price(conn, "ប្រេងឆា", sel_school, act_comm) or 8500.0
-        p_salt = get_active_item_price(conn, "អំបិល", sel_school, act_comm) or 1500.0
-        p_sauce = get_active_item_price(conn, "ទឹកត្រី", sel_school, act_comm) or 3500.0
+        p_rice = get_active_item_price(conn, "អង្ករ", sel_school if is_school_selected else "", act_comm) or 3000.0
+        p_oil = get_active_item_price(conn, "ប្រេងឆា", sel_school if is_school_selected else "", act_comm) or 8500.0
+        p_salt = get_active_item_price(conn, "អំបិល", sel_school if is_school_selected else "", act_comm) or 1500.0
+        p_sauce = get_active_item_price(conn, "ទឹកត្រី", sel_school if is_school_selected else "", act_comm) or 3500.0
 
-        st.markdown("<div style='font-size: 0.9rem; font-weight: bold; color: #0f172a; margin-bottom: 8px;'>បញ្ជីបរិមាណ និងតម្លៃស្បៀងគោលប្រចាំខែ៖</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size: 0.9rem; font-weight: bold; color: #0f172a; margin-bottom: 8px;'>បញ្ជីបរិមាណ និងតម្លៃស្បៀងទុកបានយូរប្រចាំខែ៖</div>", unsafe_allow_html=True)
         col_sp1, col_sp2, col_sp3, col_sp4 = st.columns(4)
         with col_sp1:
             fin_rice_kg = st.number_input("🌾 អង្ករ (គីឡូក្រាម)", min_value=0.0, value=float(rice_kg), step=5.0, key="inp_rice_kg")
@@ -2218,226 +2494,69 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
         }
 
         tot_staple_cost = sum(it["quantity"] * it["unit_price"] for it in staples_payload["items"]) if include_staples else 0
-        st.markdown(f"""
+        render_clean_html(f"""
         <div style="background: #f1f5f9; padding: 8px 16px; border-radius: 6px; font-weight: bold; color: #1e3a8a; text-align: right; margin-top: 8px; margin-bottom: 20px;">
-            សរុបថវិកាស្បៀងគោលទុកបានយូរ (១ខែ) ៖ <span style="color: #0369a1; font-size: 1.05rem;">{tot_staple_cost:,.0f} ៛</span>
+            សរុបថវិកាស្បៀងទុកបានយូរ (១ខែ) ៖ <span style="color: #0369a1; font-size: 1.05rem;">{tot_staple_cost:,.0f} ៛</span>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
-        st.markdown("---")
-        col_sav_btn, col_sav_sp = st.columns([2.5, 2])
-        with col_sav_btn:
-            if st.button(
-                f"💾 រក្សាទុកកាលវិភាគ និងបញ្ចូលទិន្នន័យទៅក្នុងតារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (សាលា៖ {sel_school})",
-                type="primary",
-                use_container_width=True,
-                key="btn_save_builder_and_daily_records"
-            ):
-                save_res = save_school_daily_requirements(
-                    conn=conn,
-                    school_name=sel_school,
-                    commune=act_comm,
-                    district=act_dist,
-                    province=act_prov,
-                    days_menu_data=builder_days_payload,
-                    staple_data=staples_payload
-                )
-                if save_res["success"]:
-                    st.success(f"""
-                    🎉 **រក្សាទុក និងបញ្ចូលទិន្នន័យស្បៀងជោគជ័យ!**
-                    - 🏫 សាលាបឋមសិក្សា៖ **{sel_school}**
-                    - 📅 ចំនួនថ្ងៃផ្គត់ផ្គង់ស្បៀង៖ **{save_res['total_dates']} ថ្ងៃ**
-                    - 📋 ចំនួនទិន្នន័យស្បៀងបានបញ្ចូល៖ **{save_res['total_records']} ជួរ** ចូលក្នុងតារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (Daily Records)
-                    - 💰 ថវិកាស្បៀងសរុបប្រចាំខែ៖ **{save_res['total_cost']:,.0f} ៛**
-                    """)
-                    st.balloons()
-                    st.rerun()
-
-    # ================= TAB 2: នាំចូលឯកសារស្បៀង (Upload File) =================
-    with tab_upload:
-        st.subheader("📤 នាំចូលឯកសារតម្រូវការស្បៀង (PDF, Excel, Word, CSV, រូបភាព)")
-        st.caption("ប្រព័ន្ធសម្គាល់ឈ្មោះសាលារៀន ស្រង់កាលបរិច្ឆេទ មុខទំនិញ បរិមាណ និងតម្លៃដោយស្វ័យប្រវត្តិ រួចបញ្ចូលទៅក្នុងបញ្ជីតម្រូវការស្បៀងប្រចាំថ្ងៃ")
-
-        all_known_schools = sorted(list(set(
-            [r[0] for r in conn.cursor().execute("SELECT DISTINCT school_name FROM suppliers WHERE school_name IS NOT NULL AND school_name != ''").fetchall()] +
-            [r[0] for r in conn.cursor().execute("SELECT DISTINCT school_name FROM school_menus WHERE school_name IS NOT NULL AND school_name != ''").fetchall()] +
-            [r[0] for r in conn.cursor().execute("SELECT DISTINCT school_name FROM daily_records WHERE school_name IS NOT NULL AND school_name != ''").fetchall()] +
-            ([sel_school] if sel_school and sel_school != "គ្មានសាលា" else [])
-        )))
-
-        uploaded_food_file = st.file_uploader(
-            "📂 ជ្រើសរើស ឬទម្លាក់ឯកសារនៅទីនេះ (គាំទ្រ PDF, Excel .xlsx/.xls, Word .docx, CSV, រូបភាព .png/.jpg/.jpeg)",
-            type=["pdf", "xlsx", "xls", "docx", "doc", "png", "jpg", "jpeg", "csv"],
-            key="uploader_food_file_input"
-        )
-
-        if uploaded_food_file is not None:
-            parsed_data = parse_uploaded_food_file(
-                uploaded_food_file,
-                known_schools=all_known_schools,
-                default_school=sel_school
-            )
-
-            det_s = parsed_data["detected_school"] or sel_school
-            det_m = parsed_data["detected_month"]
-            det_y = parsed_data["detected_year"]
-
-            # Confirmation & Auto-detection banner
-            st.markdown(f"""
-            <div style="background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 10px; padding: 14px 18px; margin-top: 12px; margin-bottom: 15px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
-                    <div>
-                        <span style="font-size: 1.15rem; font-weight: bold; color: #166534;">🏫 សាលារៀនដែលបានសម្គាល់៖ <span style="color: #0369a1;">{det_s}</span></span>
-                        <span style="background: #dcfce7; color: #15803d; padding: 3px 10px; border-radius: 12px; font-size: 0.82rem; font-weight: bold; margin-left: 10px;">✅ {parsed_data['school_confidence']}</span>
-                    </div>
-                    <div style="font-size: 0.88rem; color: #475569;">
-                        ឯកសារ៖ <b>{parsed_data['filename']}</b> (ប្រភេទ <b>.{parsed_data['file_type'].upper()}</b>)
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            col_cf1, col_cf2, col_cf3 = st.columns([1.8, 1, 1])
-            with col_cf1:
-                sch_opts = [det_s] + [s for s in all_known_schools if s != det_s]
-                confirmed_school = st.selectbox("🏫 បញ្ជាក់ឈ្មោះសាលាដែលត្រូវទទួលស្បៀង", sch_opts, index=0, key="sel_confirmed_import_school")
-            with col_cf2:
-                cf_month_idx = det_m - 1 if 1 <= det_m <= 12 else 10
-                confirmed_month_name = st.selectbox("📅 ខែ", KHMER_MONTHS, index=cf_month_idx, key="sel_confirmed_import_month")
-                confirmed_m_num = KHMER_MONTH_TO_NUM.get(confirmed_month_name, det_m)
-            with col_cf3:
-                confirmed_year = st.number_input("ឆ្នាំ", min_value=2024, max_value=2035, value=det_y, step=1, key="sel_confirmed_import_year")
-
-            # If image, show preview
-            if parsed_data["file_type"] in ["png", "jpg", "jpeg", "webp"]:
-                st.image(parsed_data["file_bytes"], caption=f"🖼️ រូបភាពឯកសារ៖ {parsed_data['filename']}", use_container_width=True)
-                if not parsed_data["items"]:
-                    st.info("💡 រូបភាពត្រូវបានផ្ទុកជោគជ័យ! លោកអ្នកអាចចុចប៊ូតុងខាងក្រោមដើម្បីបង្កើតតារាងស្បៀងស្ដង់ដារ MoEYS SFIS សម្រាប់សាលានេះ រួចកែសម្រួលតាមរូបភាពបានភ្លាមៗ។")
-                    if st.button("⚡ បង្កើតតារាងស្បៀងស្ដង់ដារ MoEYS SFIS តាមរូបភាពនេះ", key="btn_seed_from_image", type="primary"):
-                        sample_items = []
-                        for d_k in ["ចន្ទ", "អង្គារ", "ពុធ", "ព្រហស្បតិ៍", "សុក្រ", "សៅរ៍", "អាទិត្យ"]:
-                            p_info = DEFAULT_DAY_PRESETS.get(d_k, {})
-                            for ig in p_info.get("ingredients", []):
-                                sample_items.append({
-                                    "date": f"{confirmed_year:04d}-{confirmed_m_num:02d}-05",
-                                    "item_name": ig["item_name"],
-                                    "category": ig.get("category", "បន្លែ"),
-                                    "unit": ig.get("unit", "1គីឡូ"),
-                                    "quantity": round(float(ig.get("gram_per_student", 20.0)) * 100 / 1000.0, 2) or 2.0,
-                                    "unit_price": get_active_item_price(conn, ig["item_name"], confirmed_school),
-                                    "total_price": 0.0,
-                                    "voucher_no": "001",
-                                    "menu_name": p_info.get("dish_name", "")
-                                })
-                        parsed_data["items"] = sample_items
-                        st.session_state["cached_import_items"] = sample_items
-                        st.rerun()
-
-            # Extracted items list
-            import_items = st.session_state.get("cached_import_items", parsed_data["items"])
-
-            if import_items:
-                tot_up_cnt = len(import_items)
-                tot_up_dates = len(set(it["date"] for it in import_items))
-                tot_up_cost = sum(it.get("total_price", 0.0) or (it.get("quantity", 0.0) * it.get("unit_price", 0.0)) for it in import_items)
-
-                # Metrics
-                um1, um2, um3 = st.columns(3)
-                with um1:
-                    st.metric("📦 ចំនួនមុខទំនិញដែលបានស្រង់", f"{tot_up_cnt} ជួរ")
-                with um2:
-                    st.metric("📅 ចំនួនកាលបរិច្ឆេទ", f"{tot_up_dates} ថ្ងៃ")
-                with um3:
-                    st.metric("💰 ថវិកាសរុបប៉ាន់ស្មាន", f"{tot_up_cost:,.0f} ៛")
-
-                st.markdown("<div style='font-size: 0.9rem; font-weight: bold; color: #0f172a; margin-top: 10px; margin-bottom: 6px;'>📋 ទិន្នន័យស្បៀងដែលបានស្រង់ (អាចកែប្រែបានក្នុងតារាងផ្ទាល់)៖</div>", unsafe_allow_html=True)
-                
-                df_editor_data = pd.DataFrame([
-                    {
-                        "កាលបរិច្ឆេទ": it["date"],
-                        "មុខទំនិញ/ស្បៀង": it["item_name"],
-                        "ប្រភេទ": it.get("category") or auto_classify_category(it["item_name"]),
-                        "ឯកតា": it.get("unit", "1គីឡូ"),
-                        "បរិមាណ": float(it.get("quantity") or 0.0),
-                        "តម្លៃរាយ (៛)": float(it.get("unit_price") or get_active_item_price(conn, it["item_name"], confirmed_school)),
-                        "សរុប (៛)": float(it.get("total_price") or (float(it.get("quantity") or 0.0) * float(it.get("unit_price") or 0.0))),
-                        "មុខម្ហូប": it.get("menu_name", ""),
-                        "លេខសក្ខីប័ត្រ": it.get("voucher_no", "")
-                    }
-                    for it in import_items
-                ])
-
-                edited_df = st.data_editor(
-                    df_editor_data,
-                    use_container_width=True,
-                    num_rows="dynamic",
-                    key="editor_upload_food_table"
-                )
-
-                st.markdown("---")
-                col_imp_exec, col_imp_sp = st.columns([2.5, 2])
-                with col_imp_exec:
-                    if st.button(
-                        f"📥 បញ្ចូលទៅក្នុងបញ្ជីតម្រូវការស្បៀងប្រចាំថ្ងៃ (សាលា៖ {confirmed_school})",
-                        type="primary",
-                        use_container_width=True,
-                        key="btn_exec_import_to_daily_records"
-                    ):
-                        c_imp = conn.cursor()
-                        now_imp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        inserted_count = 0
-                        total_imported_cost = 0.0
-
-                        for _, row_val in edited_df.iterrows():
-                            r_date = str(row_val["កាលបរិច្ឆេទ"]).strip()[:10]
-                            r_item = str(row_val["មុខទំនិញ/ស្បៀង"]).strip()
-                            if not r_item or not r_date:
-                                continue
-                            r_cat = str(row_val.get("ប្រភេទ", "")).strip() or auto_classify_category(r_item)
-                            r_qty = float(row_val.get("បរិមាណ") or 0.0)
-                            r_price = float(row_val.get("តម្លៃរាយ (៛)") or 0.0)
-                            r_tot = float(row_val.get("សរុប (៛)") or (r_qty * r_price))
-                            r_menu = str(row_val.get("មុខម្ហូប", "")).strip()
-                            r_vno = str(row_val.get("លេខសក្ខីប័ត្រ", "")).strip() or get_or_create_school_voucher(conn, confirmed_school, r_date)
-                            r_phase = determine_phase_for_date(conn, confirmed_school, r_date)
-
-                            total_imported_cost += r_tot
-
-                            # Upsert into daily_records
-                            ex_rec = c_imp.execute("""
-                                SELECT id FROM daily_records
-                                WHERE school_name=? AND date=? AND item_name=?
-                            """, (confirmed_school, r_date, r_item)).fetchone()
-
-                            if ex_rec:
-                                c_imp.execute("""
-                                    UPDATE daily_records
-                                    SET quantity=?, unit_price=?, total_price=?, phase=?, voucher_no=?, consumption_date=?, category=?, menu_name=?
-                                    WHERE id=?
-                                """, (r_qty, r_price, r_tot, r_phase, r_vno, r_date, r_cat, r_menu, ex_rec[0]))
-                            else:
-                                c_imp.execute("""
-                                    INSERT INTO daily_records (
-                                        date, school_name, item_name, phase, quantity, unit_price, total_price, voucher_no, consumption_date, category, menu_name
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (r_date, confirmed_school, r_item, r_phase, r_qty, r_price, r_tot, r_vno, r_date, r_cat, r_menu))
-                            inserted_count += 1
-
-                        conn.commit()
+        # ប៊ូតុងរក្សាទុកស្បៀងទុកបានយូរ និងប៊ូតុងរក្សាទុកកាលវិភាគមុខម្ហូប
+        col_btn_st, col_btn_wk = st.columns([1.5, 2.2])
+        with col_btn_st:
+            if st.button("💾 រក្សាទុកស្បៀងទុកបានយូរ", type="primary", use_container_width=True, key="btn_save_staples_only"):
+                if not is_school_selected:
+                    st.warning("⚠️ សូមជ្រើសរើសសាលារៀនជាមុនសិនដើម្បីរក្សាទុកស្បៀងទុកបានយូរ!")
+                else:
+                    st_res = save_school_staples_only(
+                        conn=conn,
+                        school_name=sel_school,
+                        delivery_date=staple_deliv_date,
+                        staple_items=staples_payload["items"]
+                    )
+                    if st_res["success"]:
                         st.success(f"""
-                        🎉 **នាំចូលទិន្នន័យស្បៀងជោគជ័យ!**
-                        - 🏫 សាលាបឋមសិក្សា៖ **{confirmed_school}**
-                        - 📋 ចំនួនទិន្នន័យស្បៀងបានបញ្ចូល៖ **{inserted_count} ជួរ** ចូលក្នុងតារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (Daily Records)
-                        - 💰 ថវិកាសរុប៖ **{total_imported_cost:,.0f} ៛**
+                        🎉 **រក្សាទុកស្បៀងទុកបានយូរជោគជ័យ!**
+                        - 🏫 សាលាបឋមសិក្សា៖ **{sel_school}**
+                        - 📅 កាលបរិច្ឆេទចែកផ្ដល់៖ **{st_res['delivery_date']}**
+                        - 📋 ចំនួនមុខទំនិញ៖ **{st_res['inserted_count']} មុខ** (អង្ករ, ប្រេងឆា, អំបិល, ទឹកត្រី)
+                        - 💰 ថវិកាសរុប៖ **{st_res['total_cost']:,.0f} ៛**
+                        - 📑 លេខសក្ខីប័ត្រ៖ **{st_res['voucher_no']}** | វគ្គ៖ **{st_res['phase']}**
+                        - ទិន្នន័យត្រូវបានបញ្ចូលទៅក្នុង **តារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (Daily Records)** រួចរាល់!
                         """)
                         st.balloons()
                         st.rerun()
-            else:
-                st.warning("⚠️ មិនទាន់មានទិន្នន័យស្បៀងដែលបានស្រង់នៅឡើយទេ។ សូមពិនិត្យមើលឯកសារដែលបានបញ្ចូល ឬជ្រើសរើសឯកសារផ្សេង។")
 
-    # ================= TAB 3: តារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ =================
+        with col_btn_wk:
+            if is_school_selected and builder_days_payload:
+                if st.button(
+                    f"💾 រក្សាទុកកាលវិភាគមុខម្ហូប និងបញ្ចូលទៅក្នុង Daily Records (សាលា៖ {sel_school})",
+                    use_container_width=True,
+                    key="btn_save_builder_and_daily_records"
+                ):
+                    save_res = save_school_daily_requirements(
+                        conn=conn,
+                        school_name=sel_school,
+                        commune=act_comm,
+                        district=act_dist,
+                        province=act_prov,
+                        days_menu_data=builder_days_payload,
+                        staple_data=staples_payload
+                    )
+                    if save_res["success"]:
+                        st.success(f"""
+                        🎉 **រក្សាទុក និងបញ្ចូលទិន្នន័យស្បៀងជោគជ័យ!**
+                        - 🏫 សាលាបឋមសិក្សា៖ **{sel_school}**
+                        - 📅 ចំនួនថ្ងៃផ្គត់ផ្គង់ស្បៀង៖ **{save_res['total_dates']} ថ្ងៃ**
+                        - 📋 ចំនួនទិន្នន័យស្បៀងបានបញ្ចូល៖ **{save_res['total_records']} ជួរ** ចូលក្នុងតារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (Daily Records)
+                        - 💰 ថវិកាស្បៀងសរុបប្រចាំខែ៖ **{save_res['total_cost']:,.0f} ៛**
+                        """)
+                        st.balloons()
+                        st.rerun()
+
+    # ================= TAB 2: តារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ =================
     with tab_daily_rec:
-        st.subheader(f"📋 តារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (សាលា៖ {sel_school})")
+        dr_title = f" (សាលា៖ {sel_school})" if is_school_selected else " (គំរូទទេ)"
+        st.subheader(f"📋 តារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ{dr_title}")
         st.caption("ទិន្នន័យតម្រូវការស្បៀងដែលបានបញ្ចូល និងគណនាដោយស្វ័យប្រវត្តិតាមថ្ងៃនីមួយៗ ស្របតាមប្រព័ន្ធ MoEYS SFIS")
 
         col_dr1, col_dr2, col_dr3 = st.columns([1.2, 1, 2])
@@ -2448,7 +2567,7 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
             sel_dr_year = st.number_input("ឆ្នាំ", min_value=2024, max_value=2035, value=2025, step=1, key="sel_dr_year_view")
         with col_dr3:
             st.write("")
-            records = get_school_daily_records(conn, sel_school, sel_dr_year, dr_m_num)
+            records = get_school_daily_records(conn, sel_school, sel_dr_year, dr_m_num) if is_school_selected else []
             if records:
                 excel_daily_bytes = generate_daily_requirements_excel(conn, sel_school, sel_dr_year, dr_m_num, records)
                 st.download_button(
@@ -2461,12 +2580,22 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                     key="btn_dl_daily_excel"
                 )
 
-        if not records:
-            st.info(f"💡 ពុំទាន់មានទិន្នន័យតម្រូវការស្បៀងប្រចាំថ្ងៃសម្រាប់សាលា «**{sel_school}**» ក្នុងខែ {sel_dr_month} ឆ្នាំ {sel_dr_year} នៅឡើយទេ។")
+        if not is_school_selected:
+            st.info("💡 **គំរូតារាងទទេ៖** សូមជ្រើសរើស **ខេត្ត ស្រុក ឃុំ និង សាលារៀន** ខាងលើ ដើម្បីពិនិត្យមើលតារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ។")
+            empty_dr_df = pd.DataFrame(columns=[
+                "កាលបរិច្ឆេទ", "ថ្ងៃនៃសប្ដាហ៍", "មុខម្ហូប", "ប្រភេទ", "មុខទំនិញ/ស្បៀង", "បរិមាណ", "តម្លៃរាយ (៛)", "សរុបទឹកប្រាក់ (៛)", "វគ្គ", "លេខសក្ខីប័ត្រ"
+            ])
+            st.dataframe(empty_dr_df, use_container_width=True, hide_index=True)
+        elif not records:
+            st.info(f"💡 **គំរូតារាងទទេ៖** ពុំទាន់មានទិន្នន័យតម្រូវការស្បៀងប្រចាំថ្ងៃសម្រាប់សាលា «**{sel_school}**» ក្នុងខែ {sel_dr_month} ឆ្នាំ {sel_dr_year} នៅឡើយទេ។")
+            empty_dr_df = pd.DataFrame(columns=[
+                "កាលបរិច្ឆេទ", "ថ្ងៃនៃសប្ដាហ៍", "មុខម្ហូប", "ប្រភេទ", "មុខទំនិញ/ស្បៀង", "បរិមាណ", "តម្លៃរាយ (៛)", "សរុបទឹកប្រាក់ (៛)", "វគ្គ", "លេខសក្ខីប័ត្រ"
+            ])
+            st.dataframe(empty_dr_df, use_container_width=True, hide_index=True)
             st.markdown("""
             លោកអ្នកអាចបញ្ចូលទិន្នន័យបានតាមពីរវិធី៖
             1. ចុចផ្ទាំង **📝 បង្កើតមុខម្ហូបតាមថ្ងៃ MoEYS SFIS** ដើម្បីបង្កើតមុខម្ហូប និងកាលបរិច្ឆេទក្នុងខែ
-            2. ចុចផ្ទាំង **📤 នាំចូលឯកសារស្បៀង (Upload File)** ដើម្បីបញ្ចូលឯកសារ Excel, PDF, Word ឬ រូបភាព
+            2. ប្រើប្រាស់មុខងារ **📤 នាំចូលឯកសារស្បៀង (Upload File)** ក្នុងផ្ទាំងបង្កើតមុខម្ហូប ដើម្បីបញ្ចូលឯកសារ Excel, PDF, Word ឬ រូបភាព
             """)
         else:
             tot_days_cnt = len(set(r["date"] for r in records))
@@ -2474,7 +2603,6 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
             tot_weight_kg = sum(r["quantity"] for r in records if "គីឡូ" in r.get("item_name", "") or r.get("category") in ["បន្លែ", "ត្រី/សាច់/ស៊ុត", "អង្ករ"])
             tot_req_cost = sum(r["total_price"] for r in records)
 
-            # Metric Cards
             m1, m2, m3, m4 = st.columns(4)
             with m1:
                 st.metric("📅 ចំនួនថ្ងៃផ្គត់ផ្គង់", f"{tot_days_cnt} ថ្ងៃ")
@@ -2485,7 +2613,6 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
             with m4:
                 st.metric("💰 ថវិកាស្បៀងសរុប", f"{tot_req_cost:,.0f} ៛")
 
-            # Filters
             col_f1, col_f2 = st.columns([1.5, 1.5])
             with col_f1:
                 avail_dates = ["-- ទាំងអស់ --"] + sorted(list(set(r["date"] for r in records)))
@@ -2500,7 +2627,6 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
             if filter_cat != "-- ទាំងអស់ --":
                 filtered_records = [r for r in filtered_records if r["category"] == filter_cat]
 
-            # Display table
             df_display = pd.DataFrame([
                 {
                     "កាលបរិច្ឆេទ": r["date"],
@@ -2528,20 +2654,39 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                     st.success(f"✅ បានលុបទិន្នន័យខែ {sel_dr_month} ឆ្នាំ {sel_dr_year} រួចរាល់!")
                     st.rerun()
 
-    # ================= TAB 4: កាលវិភាគមុខម្ហូបប្រចាំសប្ដាហ៍ =================
+    # ================= TAB 3: កាលវិភាគមុខម្ហូបប្រចាំសប្ដាហ៍ =================
     with tab_cards:
-        if not school_menus:
-            st.info(f"💡 សាលាបឋមសិក្សា «**{sel_school}**» មិនទាន់មានទិន្នន័យបញ្ជីមុខម្ហូបនៅឡើយទេ!")
-            st.markdown("""
-            លោកអ្នកអាចជ្រើសរើសជម្រើសមួយក្នុងចំណោមខាងក្រោម៖
-            1. ចុចផ្ទាំង **📝 បង្កើតមុខម្ហូបតាមថ្ងៃ MoEYS SFIS** ដើម្បីបង្កើតមុខម្ហូប និងកាលបរិច្ឆេទក្នុងខែ
-            2. ចុចផ្ទាំង **📤 នាំចូលឯកសារស្បៀង (Upload File)** ដើម្បីបញ្ចូលឯកសារ Excel, PDF ឬ Word
-            3. ចុចផ្ទាំង **⚡ អនុវត្តគំរូស្ដង់ដារ MoEYS SFIS** ដើម្បីបញ្ចូលមុខម្ហូបផ្លូវការទាំង ៧ ថ្ងៃភ្លាមៗក្នុង ១ ឃ្លីក
-            """)
-            if st.button("🚀 អនុវត្តគំរូស្ដង់ដារ MoEYS 2026 (៧ ថ្ងៃ) ជូនសាលានេះភ្លាមៗ", key="btn_quick_seed_tab1", type="primary"):
-                apply_template_to_school(conn, sel_school, template_id="cycle_1", student_count=100)
-                st.success(f"✅ បានកំណត់គំរូស្ដង់ដារ MoEYS ជូនសាលា {sel_school} ជោគជ័យ!")
-                st.rerun()
+        if not is_school_selected or not school_menus:
+            if not is_school_selected:
+                st.info("💡 **គំរូទទេ៖** សូមជ្រើសរើស **ខេត្ត ស្រុក ឃុំ និង សាលារៀន** ខាងលើ ដើម្បីមើលកាលវិភាគមុខម្ហូបប្រចាំសប្ដាហ៍។")
+            else:
+                st.info(f"💡 **គំរូទទេ៖** សាលាបឋមសិក្សា «**{sel_school}**» មិនទាន់មានទិន្នន័យបញ្ជីមុខម្ហូបនៅឡើយទេ!")
+                if st.button("🚀 អនុវត្តគំរូស្ដង់ដារ MoEYS 2026 (៧ ថ្ងៃ) ជូនសាលានេះភ្លាមៗ", key="btn_quick_seed_tab1", type="primary"):
+                    apply_template_to_school(conn, sel_school, template_id="cycle_1", student_count=100)
+                    st.success(f"✅ បានកំណត់គំរូស្ដង់ដារ MoEYS ជូនសាលា {sel_school} ជោគជ័យ!")
+                    st.rerun()
+
+            day_colors = {
+                "ចន្ទ": ("#eff6ff", "#1d4ed8", "🟦"),
+                "អង្គារ": ("#fdf2f8", "#be185d", "🟪"),
+                "ពុធ": ("#f0fdf4", "#15803d", "🟩"),
+                "ព្រហស្បតិ៍": ("#fffbeb", "#b45309", "🟧"),
+                "សុក្រ": ("#f0f9ff", "#0369a1", "🩵"),
+                "សៅរ៍": ("#faf5ff", "#7e22ce", "🟣"),
+                "អាទិត្យ": ("#fff1f2", "#be123c", "🔴"),
+            }
+
+            for row_idx, days_chunk in enumerate([["ចន្ទ", "អង្គារ", "ពុធ", "ព្រហស្បតិ៍"], ["សុក្រ", "សៅរ៍", "អាទិត្យ"]]):
+                cols = st.columns(len(days_chunk))
+                for col_idx, d_name in enumerate(days_chunk):
+                    with cols[col_idx]:
+                        render_clean_html(f"""
+                        <div style="background-color: #f8fafc; border: 1.5px dashed #cbd5e1; border-radius: 12px; padding: 20px; text-align: center; min-height: 200px; display: flex; flex-direction: column; justify-content: center; align-items: center; margin-bottom: 12px;">
+                            <div style="font-size: 1.8rem; margin-bottom: 6px;">🍽️</div>
+                            <div style="font-weight: bold; color: #64748b; margin-bottom: 4px;">ថ្ងៃ{d_name}</div>
+                            <div style="font-size: 0.85rem; color: #94a3b8;">មិនទាន់មានមុខម្ហូប (គំរូទទេ)</div>
+                        </div>
+                        """)
         else:
             st.subheader(f"📅 កាលវិភាគមុខម្ហូបប្រចាំសប្ដាហ៍ (សាលាបឋមសិក្សា៖ {sel_school})")
             
@@ -2572,37 +2717,36 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                                 for ing in m_obj['ingredients']
                             ])
 
-                            card_html = (
-                                f'<div style="background-color: {bg_c}; border: 1.5px solid {text_c}40; border-radius: 12px; padding: 14px; margin-bottom: 15px; min-height: 280px; box-shadow: 0 2px 5px rgba(0,0,0,0.04);">'
-                                f'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">'
-                                f'<span style="font-weight: bold; font-size: 1rem; color: {text_c};">{icon} ថ្ងៃ{d_name}</span>'
-                                f'<span style="background: white; border: 1px solid {text_c}30; color: {text_c}; font-size: 0.78rem; padding: 2px 8px; border-radius: 12px; font-weight: bold;">{m_obj["meal_type"]}</span>'
-                                f'</div>'
-                                f'<div style="font-size: 1.15rem; font-weight: bold; color: #0f172a; margin-bottom: 6px;">{m_obj["menu_name"]}</div>'
-                                f'<div style="font-size: 0.82rem; color: #475569; margin-bottom: 10px;">👥 សិស្ស៖ <b>{m_obj["target_students"]} នាក់</b> | វដ្ត៖ {m_obj["cycle_week"]}</div>'
-                                f'<div style="border-top: 1px dashed {text_c}40; padding-top: 8px; margin-bottom: 8px;">'
-                                f'<div style="font-size: 0.8rem; font-weight: bold; color: #334155; margin-bottom: 6px;">🥗 គ្រឿងផ្សំ ({len(m_obj["ingredients"])} មុខ)៖</div>'
-                                f'{pills_html}'
-                                f'</div>'
-                                f'<div style="border-top: 1.5px solid {text_c}60; padding-top: 8px; margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">'
-                                f'<span style="font-size: 0.85rem; font-weight: bold; color: #334155;">💰 សរុបប្រចាំថ្ងៃ៖</span>'
-                                f'<span style="font-size: 1rem; font-weight: bold; color: {text_c};">{m_obj["total_day_cost"]:,.0f} ៛</span>'
-                                f'</div>'
-                                f'</div>'
-                            )
-                            st.markdown(card_html, unsafe_allow_html=True)
+                            card_html = f"""
+                            <div style="background-color: {bg_c}; border: 1.5px solid {text_c}40; border-radius: 12px; padding: 14px; margin-bottom: 15px; min-height: 280px; box-shadow: 0 2px 5px rgba(0,0,0,0.04);">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <span style="font-weight: bold; font-size: 1rem; color: {text_c};">{icon} ថ្ងៃ{d_name}</span>
+                                    <span style="background: white; border: 1px solid {text_c}30; color: {text_c}; font-size: 0.78rem; padding: 2px 8px; border-radius: 12px; font-weight: bold;">{m_obj["meal_type"]}</span>
+                                </div>
+                                <div style="font-size: 1.15rem; font-weight: bold; color: #0f172a; margin-bottom: 6px;">{m_obj["menu_name"]}</div>
+                                <div style="font-size: 0.82rem; color: #475569; margin-bottom: 10px;">👥 សិស្ស៖ <b>{m_obj["target_students"]} នាក់</b> | វដ្ត៖ {m_obj["cycle_week"]}</div>
+                                <div style="border-top: 1px dashed {text_c}40; padding-top: 8px; margin-bottom: 8px;">
+                                    <div style="font-size: 0.8rem; font-weight: bold; color: #334155; margin-bottom: 6px;">🥗 គ្រឿងផ្សំ ({len(m_obj["ingredients"])} មុខ)៖</div>
+                                    {pills_html}
+                                </div>
+                                <div style="border-top: 1.5px solid {text_c}60; padding-top: 8px; margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+                                    <span style="font-size: 0.85rem; font-weight: bold; color: #334155;">💰 សរុបប្រចាំថ្ងៃ៖</span>
+                                    <span style="font-size: 1rem; font-weight: bold; color: {text_c};">{m_obj["total_day_cost"]:,.0f} ៛</span>
+                                </div>
+                            </div>
+                            """
+                            render_clean_html(card_html)
                         else:
-                            empty_html = (
-                                f'<div style="background-color: #f8fafc; border: 1.5px dashed #cbd5e1; border-radius: 12px; padding: 20px; text-align: center; min-height: 280px; display: flex; flex-direction: column; justify-content: center; align-items: center;">'
-                                f'<div style="font-size: 2rem; margin-bottom: 8px;">🍽️</div>'
-                                f'<div style="font-weight: bold; color: #64748b; margin-bottom: 4px;">ថ្ងៃ{d_name}</div>'
-                                f'<div style="font-size: 0.85rem; color: #94a3b8;">មិនទាន់មានមុខម្ហូប</div>'
-                                f'</div>'
-                            )
-                            st.markdown(empty_html, unsafe_allow_html=True)
+                            empty_html = f"""
+                            <div style="background-color: #f8fafc; border: 1.5px dashed #cbd5e1; border-radius: 12px; padding: 20px; text-align: center; min-height: 280px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                                <div style="font-size: 2rem; margin-bottom: 8px;">🍽️</div>
+                                <div style="font-weight: bold; color: #64748b; margin-bottom: 4px;">ថ្ងៃ{d_name}</div>
+                                <div style="font-size: 0.85rem; color: #94a3b8;">មិនទាន់មានមុខម្ហូប</div>
+                            </div>
+                            """
+                            render_clean_html(empty_html)
 
-
-    # ================= TAB 2: អនុវត្តគំរូស្ដង់ដារ MoEYS SFIS =================
+    # ================= TAB 4: អនុវត្តគំរូស្ដង់ដារ MoEYS SFIS =================
     with tab_seed:
         st.subheader("⚡ អនុវត្តគំរូស្ដង់ដារ MoEYS SFIS ជូនសាលារៀន")
         st.write("ជ្រើសរើសគំរូស្ដង់ដារដែលបានសិក្សាស្រាវជ្រាវពីប្រព័ន្ធព័ត៌មាន **MoEYS SFIS** និងឯកសារ **បញ្ជីមុខម្ហូបដែលត្រូវបញ្ជាទិញ_2026** ដើម្បីបញ្ចូលជូនសាលានេះដោយស្វ័យប្រវត្តិ។")
@@ -2621,7 +2765,6 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
         tpl_data = STANDARD_SFIS_TEMPLATES[chosen_tpl_id]
         st.info(f"📋 **{tpl_data['name']}** ៖ {tpl_data['description']}")
 
-        # Preview table of dishes in this template
         preview_rows = []
         for dish in tpl_data["dishes"]:
             ing_names = []
@@ -2646,197 +2789,205 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
 
         col_btn_apply, col_btn_sp = st.columns([2, 3])
         with col_btn_apply:
-            if st.button(f"🚀 អនុវត្តគំរូនេះជូនសាលា «{sel_school}» ({seed_students} នាក់)", type="primary", use_container_width=True, key="btn_apply_tpl_exec"):
-                cnt = apply_template_to_school(conn, sel_school, template_id=chosen_tpl_id, student_count=seed_students, overwrite=True)
-                st.success(f"✅ បានកំណត់ និងគណនាបរិមាណស្បៀងទាំង {cnt} ថ្ងៃ ជូនសាលា {sel_school} ជោគជ័យ!")
-                st.rerun()
+            apply_label = f"🚀 អនុវត្តគំរូនេះជូនសាលា «{sel_school}» ({seed_students} នាក់)" if is_school_selected else "🚀 អនុវត្តគំរូនេះជូនសាលារៀន"
+            if st.button(apply_label, type="primary", use_container_width=True, key="btn_apply_tpl_exec"):
+                if not is_school_selected:
+                    st.warning("⚠️ សូមជ្រើសរើសសាលារៀនជាមុនសិនដើម្បីអនុវត្តគំរូស្ដង់ដារ!")
+                else:
+                    cnt = apply_template_to_school(conn, sel_school, template_id=chosen_tpl_id, student_count=seed_students, overwrite=True)
+                    st.success(f"✅ បានកំណត់ និងគណនាបរិមាណស្បៀងទាំង {cnt} ថ្ងៃ ជូនសាលា {sel_school} ជោគជ័យ!")
+                    st.rerun()
 
-    # ================= TAB 3: បញ្ចូល / កែសម្រួលមុខម្ហូបដោយដៃ =================
+    # ================= TAB 5: បញ្ចូល / កែសម្រួលមុខម្ហូបដោយដៃ =================
     with tab_manual:
-        st.subheader(f"➕ បញ្ចូល ឬកែសម្រួលមុខម្ហូប (សាលា៖ {sel_school})")
+        manual_title = f" (សាលា៖ {sel_school})" if is_school_selected else " (គំរូទទេ)"
+        st.subheader(f"➕ បញ្ចូល ឬកែសម្រួលមុខម្ហូប{manual_title}")
         
-        col_m_day, col_m_name, col_m_type = st.columns([1, 1.5, 1])
-        with col_m_day:
-            edit_day = st.selectbox("ជ្រើសរើសថ្ងៃនៃសប្ដាហ៍", KHMER_DAYS_OF_WEEK, key="inp_edit_menu_day")
-
-        # ពិនិត្យមើលថាតើថ្ងៃនេះមានមុខម្ហូបស្រាប់ឬនៅ
-        existing_day_menu = next((m for m in school_menus if m["day_of_week"] == edit_day), None)
-        
-        with col_m_name:
-            def_m_name = existing_day_menu["menu_name"] if existing_day_menu else "សម្លកកូរសាច់ជ្រូក"
-            popular_dishes = [
-                "សម្លកកូរសាច់ជ្រូក", "បាយឆាសណ្តែកកួរនិងស៊ុតទា", "ស្ងោរស្ពៃសាច់ជ្រូក",
-                "សម្លម្ជូរគ្រឿងត្រីអណ្ដែង", "សម្លម្ជូរយួនត្រីផ្ទក់ (ត្រឡាច និងប៉េងប៉ោះ)", "ឆាល្ពៅពងទា",
-                "សម្លកកូរត្រីអណ្តែង", "ឆាននោងនិងស៊ុតទា", "ស្ងោរស្ពៃចង្កឹះត្រីប្រា",
-                "ឆាបន្លែគ្រប់មុខសាច់ជ្រូក", "សម្លម្ជូរគ្រឿងត្រីប្រា", "បាយឆាពងទាការ៉ុត",
-                "➕ វាយឈ្មោះមុខម្ហូបថ្មី..."
-            ]
-            sel_dish_choice = st.selectbox("ជ្រើសរើសឈ្មោះមុខម្ហូប (MoEYS SFIS)", popular_dishes, index=(popular_dishes.index(def_m_name) if def_m_name in popular_dishes else len(popular_dishes)-1), key="sel_preset_dish")
-            if sel_dish_choice == "➕ វាយឈ្មោះមុខម្ហូបថ្មី...":
-                dish_name_input = st.text_input("វាយឈ្មោះមុខម្ហូបថ្មី", value=def_m_name if def_m_name not in popular_dishes else "", key="inp_custom_dish_name").strip()
-            else:
-                dish_name_input = sel_dish_choice
-
-        with col_m_type:
-            meal_type_input = st.selectbox("ប្រភេទពេលអាហារ", ["អាហារពេលព្រឹក", "អាហារថ្ងៃត្រង់"], key="inp_meal_type")
-
-        col_st_cnt, col_note = st.columns([1, 2])
-        with col_st_cnt:
-            target_st_input = st.number_input("ចំនួនសិស្សទទួលទាន (នាក់)", min_value=1, value=existing_day_menu["target_students"] if existing_day_menu else (target_st or 100), key="inp_dish_target_st")
-        with col_note:
-            note_input = st.text_input("ចំណាំ / ការណែនាំចម្អិន", value=existing_day_menu["notes"] if existing_day_menu else "", key="inp_dish_notes")
-
-        st.markdown("#### 🥗 បញ្ជីគ្រឿងផ្សំក្នុងមុខម្ហូបនេះ")
-        
-        # Session state for draft ingredients
-        state_key = f"draft_ing_{sel_school}_{edit_day}"
-        if state_key not in st.session_state or st.session_state.get(f"last_day_viewed_{sel_school}") != edit_day:
-            if existing_day_menu:
-                st.session_state[state_key] = [
-                    {
-                        "item_name": ing["item_name"],
-                        "category": ing["category"],
-                        "unit": ing["unit"],
-                        "total_qty": float(ing["total_qty"] or 0),
-                        "unit_price": float(ing["unit_price"] or 0),
-                        "total_cost": float(ing["total_cost"] or 0),
-                        "note": ing["note"] or ""
-                    }
-                    for ing in existing_day_menu["ingredients"]
-                ]
-            else:
-                st.session_state[state_key] = []
-            st.session_state[f"last_day_viewed_{sel_school}"] = edit_day
-
-        # Form to add an ingredient
-        with st.expander("➕ បន្ថែមគ្រឿងផ្សំចូលក្នុងមុខម្ហូបនេះ", expanded=True):
-            col_ing1, col_ing2, col_ing3, col_ing4, col_ing5 = st.columns([2, 1, 1, 1.2, 1])
-            with col_ing1:
-                cat_item_names = [p["name"] for p in SUPPLIER_PRODUCT_CATALOG]
-                ing_item_sel = st.selectbox("មុខទំនិញ (៦១ មុខស្ដង់ដារ)", cat_item_names + ["➕ វាយឈ្មោះទំនិញថ្មី..."], key="inp_add_ing_name")
-                if ing_item_sel == "➕ វាយឈ្មោះទំនិញថ្មី...":
-                    final_ing_name = st.text_input("ឈ្មោះទំនិញថ្មី", key="inp_custom_ing_name").strip()
-                else:
-                    final_ing_name = ing_item_sel
-
-            with col_ing2:
-                cat_match = next((p["category"] for p in SUPPLIER_PRODUCT_CATALOG if p["name"] == final_ing_name), "បន្លែ")
-                ing_cat = st.selectbox("ប្រភេទ", ["បន្លែ", "ត្រី សាច់ ស៊ុត", "អង្ករ", "ប្រេងឆា", "អំបិល"], index=(["បន្លែ", "ត្រី សាច់ ស៊ុត", "អង្ករ", "ប្រេងឆា", "អំបិល"].index(cat_match) if cat_match in ["បន្លែ", "ត្រី សាច់ ស៊ុត", "អង្ករ", "ប្រេងឆា", "អំបិល"] else 0), key="inp_add_ing_cat")
-
-            with col_ing3:
-                unit_match = next((p["unit"] for p in SUPPLIER_PRODUCT_CATALOG if p["name"] == final_ing_name), "1គីឡូ")
-                ing_unit = st.selectbox("ឯកតា", ["1គីឡូ", "1គ្រាប់", "លីត្រ", "កញ្ចប់"], index=(0 if "គីឡូ" in unit_match else 1 if "គ្រាប់" in unit_match else 0), key="inp_add_ing_unit")
-
-            with col_ing4:
-                ing_qty = st.number_input("បរិមាណសរុប (គ.ក/គ្រាប់)", min_value=0.1, value=2.0 if "គីឡូ" in ing_unit else 35.0, step=0.5, key="inp_add_ing_qty")
-
-            with col_ing5:
-                def_price = get_active_item_price(conn, final_ing_name, sel_school, act_comm)
-                ing_price = st.number_input("តម្លៃរាយ (៛)", min_value=0, value=int(round(def_price)), step=100, key="inp_add_ing_price")
-
-            if st.button("➕ បញ្ចូលគ្រឿងផ្សំនេះ", key="btn_add_ing_draft"):
-                if final_ing_name:
-                    st.session_state[state_key].append({
-                        "item_name": final_ing_name,
-                        "category": ing_cat,
-                        "unit": ing_unit,
-                        "total_qty": ing_qty,
-                        "unit_price": ing_price,
-                        "total_cost": round(ing_qty * ing_price, 2),
-                        "note": ""
-                    })
-                    st.rerun()
-
-        # Display current draft ingredients table
-        current_draft = st.session_state.get(state_key, [])
-        if current_draft:
-            df_draft = pd.DataFrame(current_draft)
-            st.write(f"📋 បញ្ជីគ្រឿងផ្សំបច្ចុប្បន្នសម្រាប់ថ្ងៃ{edit_day} (សរុប {len(current_draft)} មុខ)៖")
-            
-            # Show summary
-            sub_cost = sum(x["total_cost"] for x in current_draft)
-            st.caption(f"💰 ទឹកប្រាក់សរុបប្រចាំថ្ងៃ៖ **{sub_cost:,.0f} ៛**")
-            
-            edited_df = st.data_editor(
-                df_draft,
-                use_container_width=True,
-                num_rows="dynamic",
-                key=f"editor_draft_ing_{sel_school}_{edit_day}"
-            )
+        if not is_school_selected:
+            st.info("💡 **គំរូទទេ៖** សូមជ្រើសរើស **ខេត្ត ស្រុក ឃុំ និង សាលារៀន** ខាងលើ ដើម្បីបញ្ចូល ឬកែសម្រួលមុខម្ហូប។")
+            df_empty_manual = pd.DataFrame(columns=["មុខទំនិញ", "ប្រភេទ", "ឯកតា", "បរិមាណសរុប", "តម្លៃរាយ (៛)", "សរុប (៛)", "ចំណាំ"])
+            st.dataframe(df_empty_manual, use_container_width=True, hide_index=True)
         else:
-            st.warning(f"⚠️ មុខម្ហូបថ្ងៃ{edit_day} មិនទាន់មានគ្រឿងផ្សំនៅឡើយទេ។ សូមបន្ថែមគ្រឿងផ្សំខាងលើ!")
+            col_m_day, col_m_name, col_m_type = st.columns([1, 1.5, 1])
+            with col_m_day:
+                edit_day = st.selectbox("ជ្រើសរើសថ្ងៃនៃសប្ដាហ៍", KHMER_DAYS_OF_WEEK, key="inp_edit_menu_day")
 
-        col_save_m, col_del_m, col_sp_m = st.columns([1.5, 1.2, 3])
-        with col_save_m:
-            if st.button(f"💾 រក្សាទុកមុខម្ហូបថ្ងៃ{edit_day}", type="primary", use_container_width=True, key="btn_save_dish_manual"):
-                if not dish_name_input:
-                    st.error("❌ សូមវាយឈ្មោះមុខម្ហូប!")
+            existing_day_menu = next((m for m in school_menus if m["day_of_week"] == edit_day), None)
+            
+            with col_m_name:
+                def_m_name = existing_day_menu["menu_name"] if existing_day_menu else "សម្លកកូរសាច់ជ្រូក"
+                popular_dishes = [
+                    "សម្លកកូរសាច់ជ្រូក", "បាយឆាសណ្តែកកួរនិងស៊ុតទា", "ស្ងោរស្ពៃសាច់ជ្រូក",
+                    "សម្លម្ជូរគ្រឿងត្រីអណ្ដែង", "សម្លម្ជូរយួនត្រីផ្ទក់ (ត្រឡាច និងប៉េងប៉ោះ)", "ឆាល្ពៅពងទា",
+                    "សម្លកកូរត្រីអណ្តែង", "ឆាននោងនិងស៊ុតទា", "ស្ងោរស្ពៃចង្កឹះត្រីប្រា",
+                    "ឆាបន្លែគ្រប់មុខសាច់ជ្រូក", "សម្លម្ជូរគ្រឿងត្រីប្រា", "បាយឆាពងទាការ៉ុត",
+                    "➕ វាយឈ្មោះមុខម្ហូបថ្មី..."
+                ]
+                sel_dish_choice = st.selectbox("ជ្រើសរើសឈ្មោះមុខម្ហូប (MoEYS SFIS)", popular_dishes, index=(popular_dishes.index(def_m_name) if def_m_name in popular_dishes else len(popular_dishes)-1), key="sel_preset_dish")
+                if sel_dish_choice == "➕ វាយឈ្មោះមុខម្ហូបថ្មី...":
+                    dish_name_input = st.text_input("វាយឈ្មោះមុខម្ហូបថ្មី", value=def_m_name if def_m_name not in popular_dishes else "", key="inp_custom_dish_name").strip()
                 else:
-                    # Update or insert school_menus
-                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    c = conn.cursor()
-                    
-                    # Delete existing menu for this day
-                    old_ids = [r[0] for r in c.execute("SELECT id FROM school_menus WHERE school_name=? AND day_of_week=?", (sel_school, edit_day)).fetchall()]
-                    if old_ids:
-                        c.executemany("DELETE FROM menu_ingredients WHERE menu_id=?", [(oid,) for oid in old_ids])
-                        c.execute("DELETE FROM school_menus WHERE school_name=? AND day_of_week=?", (sel_school, edit_day))
+                    dish_name_input = sel_dish_choice
 
-                    c.execute("""
-                        INSERT INTO school_menus (
-                            school_name, commune, district, province,
-                            menu_name, day_of_week, meal_type, target_students,
-                            cycle_week, notes, is_active, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'មុខម្ហូបផ្ទាល់ខ្លួន', ?, 1, ?, ?)
-                    """, (sel_school, act_comm, act_dist, act_prov, dish_name_input, edit_day, meal_type_input, target_st_input, note_input, now_str, now_str))
-                    new_m_id = c.lastrowid
+            with col_m_type:
+                meal_type_input = st.selectbox("ប្រភេទពេលអាហារ", ["អាហារពេលព្រឹក", "អាហារថ្ងៃត្រង់"], key="inp_meal_type")
 
-                    # Save ingredients from edited_df if available, else current_draft
-                    items_to_save = edited_df.to_dict('records') if (edited_df is not None and not edited_df.empty) else current_draft
-                    for r_ing in items_to_save:
-                        u_p = float(r_ing.get("unit_price") or 0)
-                        q_v = float(r_ing.get("total_qty") or 0)
-                        t_c = round(q_v * u_p, 2)
+            col_st_cnt, col_note = st.columns([1, 2])
+            with col_st_cnt:
+                target_st_input = st.number_input("ចំនួនសិស្សទទួលទាន (នាក់)", min_value=1, value=existing_day_menu["target_students"] if existing_day_menu else (target_st or 100), key="inp_dish_target_st")
+            with col_note:
+                note_input = st.text_input("ចំណាំ / ការណែនាំចម្អិន", value=existing_day_menu["notes"] if existing_day_menu else "", key="inp_dish_notes")
+
+            st.markdown("#### 🥗 បញ្ជីគ្រឿងផ្សំក្នុងមុខម្ហូបនេះ")
+            
+            state_key = f"draft_ing_{sel_school}_{edit_day}"
+            if state_key not in st.session_state or st.session_state.get(f"last_day_viewed_{sel_school}") != edit_day:
+                if existing_day_menu:
+                    st.session_state[state_key] = [
+                        {
+                            "item_name": ing["item_name"],
+                            "category": ing["category"],
+                            "unit": ing["unit"],
+                            "total_qty": float(ing["total_qty"] or 0),
+                            "unit_price": float(ing["unit_price"] or 0),
+                            "total_cost": float(ing["total_cost"] or 0),
+                            "note": ing["note"] or ""
+                        }
+                        for ing in existing_day_menu["ingredients"]
+                    ]
+                else:
+                    st.session_state[state_key] = []
+                st.session_state[f"last_day_viewed_{sel_school}"] = edit_day
+
+            with st.expander("➕ បន្ថែមគ្រឿងផ្សំចូលក្នុងមុខម្ហូបនេះ", expanded=True):
+                col_ing1, col_ing2, col_ing3, col_ing4, col_ing5 = st.columns([2, 1, 1, 1.2, 1])
+                with col_ing1:
+                    cat_item_names = [p["name"] for p in SUPPLIER_PRODUCT_CATALOG]
+                    ing_item_sel = st.selectbox("មុខទំនិញ (៦១ មុខស្ដង់ដារ)", cat_item_names + ["➕ វាយឈ្មោះទំនិញថ្មី..."], key="inp_add_ing_name")
+                    if ing_item_sel == "➕ វាយឈ្មោះទំនិញថ្មី...":
+                        final_ing_name = st.text_input("ឈ្មោះទំនិញថ្មី", key="inp_custom_ing_name").strip()
+                    else:
+                        final_ing_name = ing_item_sel
+
+                with col_ing2:
+                    cat_match = next((p["category"] for p in SUPPLIER_PRODUCT_CATALOG if p["name"] == final_ing_name), "បន្លែ")
+                    ing_cat = st.selectbox("ប្រភេទ", ["បន្លែ", "ត្រី សាច់ ស៊ុត", "អង្ករ", "ប្រេងឆា", "អំបិល"], index=(["បន្លែ", "ត្រី សាច់ ស៊ុត", "អង្ករ", "ប្រេងឆា", "អំបិល"].index(cat_match) if cat_match in ["បន្លែ", "ត្រី សាច់ ស៊ុត", "អង្ករ", "ប្រេងឆា", "អំបិល"] else 0), key="inp_add_ing_cat")
+
+                with col_ing3:
+                    unit_match = next((p["unit"] for p in SUPPLIER_PRODUCT_CATALOG if p["name"] == final_ing_name), "1គីឡូ")
+                    ing_unit = st.selectbox("ឯកតា", ["1គីឡូ", "1គ្រាប់", "លីត្រ", "កញ្ចប់"], index=(0 if "គីឡូ" in unit_match else 1 if "គ្រាប់" in unit_match else 0), key="inp_add_ing_unit")
+
+                with col_ing4:
+                    ing_qty = st.number_input("បរិមាណសរុប (គ.ក/គ្រាប់)", min_value=0.1, value=2.0 if "គីឡូ" in ing_unit else 35.0, step=0.5, key="inp_add_ing_qty")
+
+                with col_ing5:
+                    def_price = get_active_item_price(conn, final_ing_name, sel_school, act_comm)
+                    ing_price = st.number_input("តម្លៃរាយ (៛)", min_value=0, value=int(round(def_price)), step=100, key="inp_add_ing_price")
+
+                if st.button("➕ បញ្ចូលគ្រឿងផ្សំនេះ", key="btn_add_ing_draft"):
+                    if final_ing_name:
+                        st.session_state[state_key].append({
+                            "item_name": final_ing_name,
+                            "category": ing_cat,
+                            "unit": ing_unit,
+                            "total_qty": ing_qty,
+                            "unit_price": ing_price,
+                            "total_cost": round(ing_qty * ing_price, 2),
+                            "note": ""
+                        })
+                        st.rerun()
+
+            current_draft = st.session_state.get(state_key, [])
+            if current_draft:
+                df_draft = pd.DataFrame(current_draft)
+                st.write(f"📋 បញ្ជីគ្រឿងផ្សំបច្ចុប្បន្នសម្រាប់ថ្ងៃ{edit_day} (សរុប {len(current_draft)} មុខ)៖")
+                sub_cost = sum(x["total_cost"] for x in current_draft)
+                st.caption(f"💰 ទឹកប្រាក់សរុបប្រចាំថ្ងៃ៖ **{sub_cost:,.0f} ៛**")
+                
+                edited_df = st.data_editor(
+                    df_draft,
+                    use_container_width=True,
+                    num_rows="dynamic",
+                    key=f"editor_draft_ing_{sel_school}_{edit_day}"
+                )
+            else:
+                st.warning(f"⚠️ មុខម្ហូបថ្ងៃ{edit_day} មិនទាន់មានគ្រឿងផ្សំនៅឡើយទេ។ សូមបន្ថែមគ្រឿងផ្សំខាងលើ!")
+
+            col_save_m, col_del_m, col_sp_m = st.columns([1.5, 1.2, 3])
+            with col_save_m:
+                if st.button(f"💾 រក្សាទុកមុខម្ហូបថ្ងៃ{edit_day}", type="primary", use_container_width=True, key="btn_save_dish_manual"):
+                    if not dish_name_input:
+                        st.error("❌ សូមវាយឈ្មោះមុខម្ហូប!")
+                    else:
+                        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        c = conn.cursor()
+                        
+                        old_ids = [r[0] for r in c.execute("SELECT id FROM school_menus WHERE school_name=? AND day_of_week=?", (sel_school, edit_day)).fetchall()]
+                        if old_ids:
+                            c.executemany("DELETE FROM menu_ingredients WHERE menu_id=?", [(oid,) for oid in old_ids])
+                            c.execute("DELETE FROM school_menus WHERE school_name=? AND day_of_week=?", (sel_school, edit_day))
+
                         c.execute("""
-                            INSERT INTO menu_ingredients (
-                                menu_id, item_name, category, unit,
-                                gram_per_student, total_qty, unit_price, total_cost, note
-                            ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
-                        """, (new_m_id, r_ing["item_name"], r_ing.get("category", ""), r_ing.get("unit", "1គីឡូ"), q_v, u_p, t_c, r_ing.get("note", "")))
+                            INSERT INTO school_menus (
+                                school_name, commune, district, province,
+                                menu_name, day_of_week, meal_type, target_students,
+                                cycle_week, notes, is_active, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'មុខម្ហូបផ្ទាល់ខ្លួន', ?, 1, ?, ?)
+                        """, (sel_school, act_comm, act_dist, act_prov, dish_name_input, edit_day, meal_type_input, target_st_input, note_input, now_str, now_str))
+                        new_m_id = c.lastrowid
 
-                    conn.commit()
-                    st.session_state[state_key] = items_to_save
-                    st.success(f"✅ បានរក្សាទុកមុខម្ហូប «{dish_name_input}» សម្រាប់ថ្ងៃ{edit_day} ជោគជ័យ!")
-                    st.rerun()
+                        items_to_save = edited_df.to_dict('records') if (edited_df is not None and not edited_df.empty) else current_draft
+                        for r_ing in items_to_save:
+                            u_p = float(r_ing.get("unit_price") or 0)
+                            q_v = float(r_ing.get("total_qty") or 0)
+                            t_c = round(q_v * u_p, 2)
+                            c.execute("""
+                                INSERT INTO menu_ingredients (
+                                    menu_id, item_name, category, unit,
+                                    gram_per_student, total_qty, unit_price, total_cost, note
+                                ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+                            """, (new_m_id, r_ing["item_name"], r_ing.get("category", ""), r_ing.get("unit", "1គីឡូ"), q_v, u_p, t_c, r_ing.get("note", "")))
 
-        with col_del_m:
-            if existing_day_menu:
-                if st.button(f"🗑️ លុបមុខម្ហូបថ្ងៃ{edit_day}", key="btn_del_day_menu", use_container_width=True):
-                    c = conn.cursor()
-                    c.execute("DELETE FROM menu_ingredients WHERE menu_id=?", (existing_day_menu["id"],))
-                    c.execute("DELETE FROM school_menus WHERE id=?", (existing_day_menu["id"],))
-                    conn.commit()
-                    st.success(f"🗑️ បានលុបមុខម្ហូបថ្ងៃ{edit_day} រួចរាល់!")
-                    st.rerun()
+                        conn.commit()
+                        st.session_state[state_key] = items_to_save
+                        st.success(f"✅ បានរក្សាទុកមុខម្ហូប «{dish_name_input}» សម្រាប់ថ្ងៃ{edit_day} ជោគជ័យ!")
+                        st.rerun()
 
-    # ================= TAB 4: តារាងតម្រូវការស្បៀងប្រចាំខែ =================
+            with col_del_m:
+                if existing_day_menu:
+                    if st.button(f"🗑️ លុបមុខម្ហូបថ្ងៃ{edit_day}", key="btn_del_day_menu", use_container_width=True):
+                        c = conn.cursor()
+                        c.execute("DELETE FROM menu_ingredients WHERE menu_id=?", (existing_day_menu["id"],))
+                        c.execute("DELETE FROM school_menus WHERE id=?", (existing_day_menu["id"],))
+                        conn.commit()
+                        st.success(f"🗑️ បានលុបមុខម្ហូបថ្ងៃ{edit_day} រួចរាល់!")
+                        st.rerun()
+
+    # ================= TAB 6: តារាងតម្រូវការស្បៀងប្រចាំខែ =================
     with tab_matrix:
-        st.subheader(f"📊 តារាងតម្រូវការបន្លែ ត្រី សាច់ ស៊ុត ប្រចាំខែ (សាលា៖ {sel_school})")
+        matrix_title = f" (សាលា៖ {sel_school})" if is_school_selected else " (គំរូទទេ)"
+        st.subheader(f"📊 តារាងតម្រូវការបន្លែ ត្រី សាច់ ស៊ុត ប្រចាំខែ{matrix_title}")
         st.caption("គំរូទម្រង់ស្ដង់ដារដូចក្នុងឯកសារ «បញ្ជីមុខម្ហូបដែលត្រូវបញ្ជាទិញ_2026.xlsm» (សន្លឹក ចំនួនសរុប ខាងកើត)")
 
         col_days_opt, col_stat_opt = st.columns([1, 2])
         with col_days_opt:
             days_per_month_inp = st.number_input("ចំនួនថ្ងៃហូបក្នុង១ខែ (ថ្ងៃ)", min_value=1, max_value=10, value=4, step=1, key="inp_matrix_days")
 
-        matrix_data = calculate_school_monthly_matrix(conn, sel_school, days_per_month=days_per_month_inp)
+        matrix_data = calculate_school_monthly_matrix(conn, sel_school, days_per_month=days_per_month_inp) if is_school_selected else {"rows": [], "grand_total_cost": 0.0, "total_items": 0}
         rows_m = matrix_data["rows"]
 
-        if not rows_m:
-            st.warning("⚠️ សាលានេះមិនទាន់មានមុខម្ហូបសម្រាប់គណនាតារាងតម្រូវការស្បៀងនៅឡើយទេ!")
+        if not is_school_selected or not rows_m:
+            if not is_school_selected:
+                st.info("💡 **គំរូតារាងទទេ៖** សូមជ្រើសរើស **ខេត្ត ស្រុក ឃុំ និង សាលារៀន** ខាងលើ ដើម្បីមើលតារាងតម្រូវការស្បៀងប្រចាំខែ។")
+            else:
+                st.info(f"💡 **គំរូតារាងទទេ៖** សាលា «**{sel_school}**» មិនទាន់មានមុខម្ហូបសម្រាប់គណនាតារាងតម្រូវការស្បៀងនៅឡើយទេ។")
+            empty_m_df = pd.DataFrame(columns=[
+                "ល.រ", "ថ្ងៃ", "មុខម្ហូប", "មុខទំនិញ", "ប្រភេទ", "ឯកតា", "បរិមាណប្រចាំថ្ងៃ", "ចំនួនថ្ងៃហូប", "សរុប១ខែ", "តម្លៃរាយ (៛)", "សរុបទឹកប្រាក់ (៛)"
+            ])
+            st.dataframe(empty_m_df, use_container_width=True, hide_index=True)
         else:
             df_m = pd.DataFrame(rows_m)
             
-            # Summary Metrics
             sm_c1, sm_c2, sm_c3 = st.columns(3)
             with sm_c1:
                 st.metric("📦 មុខទំនិញសរុប", f"{len(df_m)} ជួរទំនិញ")
@@ -2847,7 +2998,6 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
             with sm_c3:
                 st.metric("💰 ថវិកាសរុបប្រចាំខែ", f"{matrix_data['grand_total_cost']:,.0f} ៛")
 
-            # Data Table
             st.dataframe(
                 df_m,
                 use_container_width=True,
@@ -2861,7 +3011,6 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                 }
             )
 
-            # Category Breakdown
             st.markdown("#### 🥗 ការបែងចែកថវិកាតាមក្រុមចំណីអាហារ")
             cat_groups = {}
             for r in rows_m:
@@ -2876,9 +3025,10 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                         pct = (cat_amt / matrix_data['grand_total_cost'] * 100) if matrix_data['grand_total_cost'] else 0
                         st.metric(f"🏷️ {cat_name}", f"{cat_amt:,.0f} ៛", f"{pct:.1f}% នៃថវិកា")
 
-    # ================= TAB 5: បោះពុម្ព & ទាញយកឯកសារផ្លូវការ =================
+    # ================= TAB 7: បោះពុម្ព & ទាញយកឯកសារផ្លូវការ =================
     with tab_export:
-        st.subheader(f"🖨️ បោះពុម្ព និងទាញយកតារាងមុខម្ហូបផ្លូវការ (សាលា៖ {sel_school})")
+        exp_title = f" (សាលា៖ {sel_school})" if is_school_selected else " (គំរូទទេ)"
+        st.subheader(f"🖨️ បោះពុម្ព និងទាញយកតារាងមុខម្ហូបផ្លូវការ{exp_title}")
         
         col_ex1, col_ex2, col_ex3 = st.columns([1, 1, 1.5])
         with col_ex1:
@@ -2889,52 +3039,74 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
         with col_ex3:
             st.write("")
             st.write("")
-            excel_bytes = generate_official_menu_excel(conn, sel_school, month_name=exp_month, year_num=exp_year, days_per_month=4)
-            st.download_button(
-                label=f"📥 ទាញយកជា Excel ផ្លូវការ (.xlsx)",
-                data=excel_bytes,
-                file_name=f"តារាងមុខម្ហូប_សាលា_{sel_school}_{exp_month}_{exp_year}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary",
-                use_container_width=True,
-                key="btn_dl_menu_excel"
-            )
+            if is_school_selected:
+                excel_bytes = generate_official_menu_excel(conn, sel_school, month_name=exp_month, year_num=exp_year, days_per_month=4)
+                st.download_button(
+                    label=f"📥 ទាញយកជា Excel ផ្លូវការ (.xlsx)",
+                    data=excel_bytes,
+                    file_name=f"តារាងមុខម្ហូប_សាលា_{sel_school}_{exp_month}_{exp_year}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    use_container_width=True,
+                    key="btn_dl_menu_excel"
+                )
+            else:
+                st.button("📥 ទាញយកជា Excel ផ្លូវការ (.xlsx)", disabled=True, use_container_width=True, key="btn_dl_menu_excel_dis")
 
         # Print Preview
         st.markdown("---")
         st.markdown("#### 📄 ទិដ្ឋភាពបោះពុម្ព (Print Preview)")
         
-        matrix_res_p = calculate_school_monthly_matrix(conn, sel_school, days_per_month=4)
-        p_rows = matrix_res_p["rows"]
+        if not is_school_selected:
+            st.info("💡 **គំរូតារាងទទេ៖** សូមជ្រើសរើស **ខេត្ត ស្រុក ឃុំ និង សាលារៀន** ខាងលើ ដើម្បីបោះពុម្ព និងទាញយកឯកសារផ្លូវការ។ ខាងក្រោមជាទម្រង់គំរូតារាងទទេ៖")
+            matrix_res_p = {"rows": [], "grand_total_cost": 0.0}
+            p_rows = []
+        else:
+            matrix_res_p = calculate_school_monthly_matrix(conn, sel_school, days_per_month=4)
+            p_rows = matrix_res_p["rows"]
         
         rows_html = ""
-        for pr in p_rows:
-            day_td = f'<td style="text-align: center; font-weight: bold; background: #e0f2fe;">{pr["ថ្ងៃ"]}</td>' if pr["ថ្ងៃ"] else '<td></td>'
-            dish_td = f'<td style="font-weight: bold; background: #f8fafc;">{pr["មុខម្ហូប"]}</td>' if pr["មុខម្ហូប"] else '<td></td>'
-            rows_html += f"""
+        if not p_rows:
+            rows_html = """
             <tr>
-                <td style="text-align: center;">{pr['ល.រ']}</td>
-                {day_td}
-                {dish_td}
-                <td>{pr['មុខទំនិញ']}</td>
-                <td style="text-align: center;">{pr['ប្រភេទ']}</td>
-                <td style="text-align: center;">{pr['ឯកតា']}</td>
-                <td style="text-align: right;">{pr['បរិមាណប្រចាំថ្ងៃ']:.2f}</td>
-                <td style="text-align: center;">{pr['ចំនួនថ្ងៃហូប']}</td>
-                <td style="text-align: right; font-weight: bold;">{pr['សរុប១ខែ']:.2f}</td>
-                <td style="text-align: right;">{pr['តម្លៃរាយ (៛)']:,.0f}</td>
-                <td style="text-align: right; font-weight: bold; color: #0369a1;">{pr['សរុបទឹកប្រាក់ (៛)']:,.0f}</td>
+                <td colspan="11" style="text-align: center; padding: 18px; color: #64748b; font-style: italic;">
+                    (គំរូតារាងទទេ - ពុំទាន់មានទិន្នន័យមុខម្ហូប)
+                </td>
             </tr>
             """
+        else:
+            for pr in p_rows:
+                day_td = f'<td style="text-align: center; font-weight: bold; background: #e0f2fe;">{pr["ថ្ងៃ"]}</td>' if pr["ថ្ងៃ"] else '<td></td>'
+                dish_td = f'<td style="font-weight: bold; background: #f8fafc;">{pr["មុខម្ហូប"]}</td>' if pr["មុខម្ហូប"] else '<td></td>'
+                rows_html += f"""
+                <tr>
+                    <td style="text-align: center;">{pr['ល.រ']}</td>
+                    {day_td}
+                    {dish_td}
+                    <td>{pr['មុខទំនិញ']}</td>
+                    <td style="text-align: center;">{pr['ប្រភេទ']}</td>
+                    <td style="text-align: center;">{pr['ឯកតា']}</td>
+                    <td style="text-align: right;">{pr['បរិមាណប្រចាំថ្ងៃ']:.2f}</td>
+                    <td style="text-align: center;">{pr['ចំនួនថ្ងៃហូប']}</td>
+                    <td style="text-align: right; font-weight: bold;">{pr['សរុប១ខែ']:.2f}</td>
+                    <td style="text-align: right;">{pr['តម្លៃរាយ (៛)']:,.0f}</td>
+                    <td style="text-align: right; font-weight: bold; color: #0369a1;">{pr['សរុបទឹកប្រាក់ (៛)']:,.0f}</td>
+                </tr>
+                """
+
+        preview_school = sel_school if is_school_selected else "............................................"
+        preview_comm = act_comm if act_comm else "...................."
+        preview_dist = act_dist if act_dist else "...................."
+        preview_prov = act_prov if act_prov else "...................."
 
         preview_html = f"""
-        <div style="background: white; border: 1px solid #cbd5e1; border-radius: 8px; padding: 30px; font-family: 'Khmer OS Siemreap', 'Siemreap', sans-serif; box-shadow: 0 4px 15px rgba(0,0,0,0.06);">
+        <div style="background: white; border: 1px solid #cbd5e1; border-radius: 8px; padding: 24px; font-family: 'Khmer OS Siemreap', 'Siemreap', sans-serif; box-shadow: 0 4px 15px rgba(0,0,0,0.06);">
             <div style="text-align: center; margin-bottom: 20px;">
                 <div style="font-family: 'Khmer OS Muol Light', sans-serif; font-size: 1.15rem; font-weight: bold; color: #1e3a8a;">ព្រះរាជាណាចក្រកម្ពុជា</div>
                 <div style="font-family: 'Khmer OS Muol Light', sans-serif; font-size: 1rem; font-weight: bold; color: #1e3a8a;">ជាតិ សាសនា ព្រះមហាក្សត្រ</div>
                 <div style="font-size: 1.25rem; font-weight: bold; color: #0f172a; margin-top: 15px;">តារាងមុខម្ហូបប្រចាំសប្ដាហ៍ និង តារាងតម្រូវការបន្លែ ត្រី សាច់ ស៊ុត</div>
                 <div style="font-size: 0.95rem; color: #475569; margin-top: 5px;">
-                    សាលាបឋមសិក្សា៖ <b>{sel_school}</b> | ឃុំ៖ <b>{act_comm}</b> | ស្រុក៖ <b>{act_dist}</b> | ខេត្ត៖ <b>{act_prov}</b>
+                    សាលាបឋមសិក្សា៖ <b>{preview_school}</b> | ឃុំ៖ <b>{preview_comm}</b> | ស្រុក៖ <b>{preview_dist}</b> | ខេត្ត៖ <b>{preview_prov}</b>
                 </div>
                 <div style="font-size: 0.9rem; color: #0284c7; font-weight: bold; margin-top: 4px;">សម្រាប់ខែ {exp_month} ឆ្នាំ {exp_year}</div>
             </div>
@@ -2978,4 +3150,4 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
             </div>
         </div>
         """
-        st.markdown(preview_html, unsafe_allow_html=True)
+        render_clean_html(preview_html)
