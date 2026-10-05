@@ -16,6 +16,7 @@ from rapidocr_onnxruntime import RapidOCR
 import streamlit as st
 import excel_schema_importer as esi
 from catalog_data import SUPPLIER_PRODUCT_CATALOG
+import menu_data
 
 # កំណត់ទំព័រ Interface
 st.set_page_config(
@@ -470,6 +471,15 @@ def init_db():
     for pid, pname in cursor.fetchall():
       auto_cat = classify_item_category(pname)
       cursor.execute("UPDATE products SET category=? WHERE id=?", (auto_cat, pid))
+
+  # តារាងបញ្ជីមុខម្ហូប និងគ្រឿងផ្សំ MoEYS SFIS
+  menu_data.init_menu_db(conn)
+  has_menus = cursor.execute("SELECT 1 FROM school_menus LIMIT 1").fetchone()
+  if not has_menus and os.path.exists("បញ្ជីមុខម្ហូបដែលត្រូវបញ្ជាទិញ_2026.xlsm"):
+    try:
+      menu_data.import_menus_from_2026_workbook(conn, "បញ្ជីមុខម្ហូបដែលត្រូវបញ្ជាទិញ_2026.xlsm")
+    except Exception:
+      pass
 
   # តារាងកត់ត្រាប្រចាំថ្ងៃ (មានលេខសក្ខីប័ត្រ voucher_no)
   cursor.execute("""
@@ -4770,6 +4780,7 @@ all_menu_items = [
     "📍 គ្រប់គ្រងទីតាំង និងសាលារៀន",
     "🚚 បញ្ជីគ្រប់គ្រងអ្នកផ្គត់ផ្គង់",
     "📦 បញ្ជីគ្រប់គ្រងទំនិញ និងតម្លៃ",
+    "🍲 គំរូ និងបញ្ជីមុខម្ហូបតាមសាលា (MoEYS SFIS)",
     "📝 កត់ត្រា និងចេញវិក្កយបត្រប្រចាំថ្ងៃ",
     "📑 សំណើទូទាត់ប្រចាំខែ",
     "🛒 បញ្ជីទិញទំនិញចូល & ជំពាក់អ្នកផ្គត់ផ្គង់",
@@ -8180,7 +8191,15 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
       )
 
 
-# ================= ៤. កត់ត្រា និងចេញវិក្កយបត្រប្រចាំថ្ងៃ (ឧបសម្ពន្ធ ៣) =================
+# ================= ៤. គំរូ និងបញ្ជីមុខម្ហូបតាមសាលា (MoEYS SFIS) =================
+elif menu == "🍲 គំរូ និងបញ្ជីមុខម្ហូបតាមសាលា (MoEYS SFIS)":
+  menu_data.render_school_menu_section(
+      conn, cursor, user_prov, user_dist, user_comm, user_school, is_admin,
+      get_scoped_district_choices, get_scoped_commune_choices, get_scoped_schools, get_school_location_info
+  )
+
+
+# ================= ៥. កត់ត្រា និងចេញវិក្កយបត្រប្រចាំថ្ងៃ (ឧបសម្ពន្ធ ៣) =================
 elif menu == "📝 កត់ត្រា និងចេញវិក្កយបត្រប្រចាំថ្ងៃ":
   col_pos1, col_pos2 = st.columns([5, 1])
   with col_pos1:
@@ -8347,6 +8366,34 @@ elif menu == "📝 កត់ត្រា និងចេញវិក្កយប
         conn.commit()
 
     df_inv = df_inv_full[["មុខទំនិញ", "វគ្គ", "បរិមាណ", "តម្លៃរាយ (៛)", "សរុប (៛)"]] if not df_inv_full.empty else pd.DataFrame()
+
+    # ពិនិត្យមើលមុខម្ហូបប្រចាំថ្ងៃនៃកាលបរិច្ឆេទញ៉ាំ (inv_eat_date) របស់សាលានេះ
+    eat_day_name = menu_data.KHMER_WEEKDAY_MAP.get(inv_eat_date.weekday(), "")
+    day_menu_data = menu_data.get_menu_by_day(conn, inv_school, eat_day_name)
+    if day_menu_data and day_menu_data.get("ingredients"):
+      col_mb1, col_mb2 = st.columns([3, 2])
+      with col_mb1:
+        st.info(f"🍲 **មុខម្ហូបថ្ងៃ{eat_day_name} របស់ {inv_school} ៖** «**{day_menu_data['menu_name']}**» (គ្រឿងផ្សំស្ដង់ដារ {len(day_menu_data['ingredients'])} មុខ)")
+      with col_mb2:
+        if st.button(f"⚡ បញ្ចូលគ្រឿងផ្សំតាមមុខម្ហូបថ្ងៃ{eat_day_name}", key=f"btn_autofill_menu_{inv_school}_{inv_date}_{eat_day_name}", use_container_width=True, help="ស្រង់យកមុខទំនិញ និងបរិមាណតាមមុខម្ហូបថ្ងៃនេះមកបំពេញក្នុងវិក្កយបត្រស្វ័យប្រវត្តិ"):
+          inserted_cnt = 0
+          for ing in day_menu_data["ingredients"]:
+            itm_n = ing["item_name"]
+            qty_v = ing["quantity"]
+            u_p = get_supplier_item_price(supplier_name, itm_n, date_val=inv_date, phase=inv_auto_phase, school_name=inv_school, commune=act_commune)
+            if u_p <= 0:
+              u_p = ing["unit_price"]
+            tot_p = round(qty_v * u_p, 2)
+
+            ex_row = cursor.execute("SELECT id FROM daily_records WHERE school_name=? AND date=? AND item_name=?", (inv_school, str(inv_date), itm_n)).fetchone()
+            if ex_row:
+              cursor.execute("UPDATE daily_records SET quantity=?, unit_price=?, total_price=?, consumption_date=?, voucher_no=? WHERE id=?", (qty_v, u_p, tot_p, str(inv_eat_date), cur_voucher_no, ex_row[0]))
+            else:
+              cursor.execute("INSERT INTO daily_records (date, school_name, item_name, phase, quantity, unit_price, total_price, voucher_no, consumption_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (str(inv_date), inv_school, itm_n, inv_auto_phase, qty_v, u_p, tot_p, cur_voucher_no, str(inv_eat_date)))
+            inserted_cnt += 1
+          conn.commit()
+          st.success(f"✅ បានបញ្ចូលទំនិញ {inserted_cnt} មុខតាមមុខម្ហូប «{day_menu_data['menu_name']}» ចូលក្នុងវិក្កយបត្រជោគជ័យ!")
+          st.rerun()
 
     # ៣. ប្រអប់បន្ថែម ឬកែប្រែទំនិញដោយផ្ទាល់លើវិក្កយបត្រនេះ
     with st.expander("✏️ បន្ថែម / កែសម្រួលទំនិញក្នុងវិក្កយបត្រនេះ", expanded=False):

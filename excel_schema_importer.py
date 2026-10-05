@@ -143,6 +143,13 @@ def parse_excel_workbook(file_bytes_or_path, db_conn=None):
                 results["sheets"][s_name] = catalog_info
             continue
 
+        # ៣.៥. តារាងមុខម្ហូប និងតម្រូវការស្បៀង (ចំនួនសរុប ខាងកើត ឬ មុខម្ហូប)
+        if 'ចំនួនសរុប' in s_name or 'មុខម្ហូប' in s_name or 'menu' in lower_s:
+            menu_info = parse_menu_schedule_sheet(ws, s_name)
+            if menu_info:
+                results["sheets"][s_name] = menu_info
+            continue
+
         # ៤. កំណត់ត្រាប្រចាំថ្ងៃតាមសាលា (School Daily Matrix)
         # ពិនិត្យមើលវត្តមានក្បាលជួរដេក ថ្ងៃដែលបានទិញដាក់ ឬ លេខវិក័យប័ត្រ ឬឈ្មោះសាលា
         is_matrix = False
@@ -465,6 +472,53 @@ def parse_price_catalog_sheet(ws, sheet_name):
         "title_kh": f"📦 តារាងតម្លៃទំនិញ ({sheet_name})",
         "df": df,
         "total_records": len(rows)
+    }
+
+def parse_menu_schedule_sheet(ws, sheet_name):
+    """ស្រង់ទិន្នន័យតារាងមុខម្ហូបប្រចាំសប្ដាហ៍ និងតម្រូវការបន្លែ ត្រី សាច់ ស៊ុត (ចំនួនសរុប ខាងកើត)"""
+    rows = []
+    current_day = ""
+    current_dish = ""
+    
+    school_cols = []
+    for c in range(4, ws.max_column + 1, 3):
+        v = ws.cell(3, c).value
+        if v and str(v).strip() and "សរុប" not in str(v):
+            school_cols.append((c, str(v).strip()))
+            
+    for r in range(4, ws.max_row + 1):
+        day_val = ws.cell(r, 1).value
+        dish_val = ws.cell(r, 2).value
+        item_val = ws.cell(r, 3).value
+        if day_val and str(day_val).strip():
+            current_day = str(day_val).strip()
+        if dish_val and str(dish_val).strip():
+            current_dish = str(dish_val).strip()
+            
+        if item_val and str(item_val).strip():
+            row_dict = {
+                "ថ្ងៃ": current_day,
+                "មុខម្ហូប": current_dish,
+                "មុខទំនិញ": str(item_val).strip(),
+            }
+            for col_idx, s_n in school_cols:
+                row_dict[f"បរិមាណ_{s_n}"] = ws.cell(r, col_idx).value or 0
+                row_dict[f"ថ្ងៃហូប_{s_n}"] = ws.cell(r, col_idx+1).value or 4
+                row_dict[f"សរុបខែ_{s_n}"] = ws.cell(r, col_idx+2).value or 0
+                
+            tot_day = ws.cell(r, 19).value
+            if tot_day is not None:
+                row_dict["សរុបប្រចាំថ្ងៃ"] = tot_day
+            rows.append(row_dict)
+            
+    df = pd.DataFrame(rows) if rows else pd.DataFrame()
+    return {
+        "sheet_type": "menu_schedule",
+        "sheet_name": sheet_name,
+        "title_kh": f"🍲 តារាងមុខម្ហូប និងតម្រូវការស្បៀង ({sheet_name})",
+        "df": df,
+        "total_records": len(rows),
+        "schools": [s[1] for s in school_cols]
     }
 
 def parse_external_file(uploaded_file, db_conn=None):
