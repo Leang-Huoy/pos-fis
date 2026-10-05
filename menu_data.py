@@ -299,6 +299,9 @@ def apply_template_to_school(conn, school_name, template_id="cycle_1", student_c
     អនុវត្តគំរូស្ដង់ដារ MoEYS SFIS ជូនសាលារៀនជាក់លាក់មួយ
     គណនាបរិមាណគ្រឿងផ្សំតាមចំនួនសិស្ស និងចាប់យកតម្លៃបច្ចុប្បន្នដោយស្វ័យប្រវត្តិ
     """
+    if not school_name or school_name == "គ្មានសាលា":
+        return 0
+
     if template_id not in STANDARD_SFIS_TEMPLATES:
         template_id = "cycle_1"
 
@@ -508,6 +511,9 @@ def import_menus_from_2026_workbook(conn, workbook_path="បញ្ជីមុ�
 
 def get_school_menu_overview(conn, school_name):
     """ទាញយកមុខម្ហូបទាំងអស់របស់សាលារៀបតាមថ្ងៃនៃសប្ដាហ៍"""
+    if not school_name or school_name == "គ្មានសាលា":
+        return []
+
     c = conn.cursor()
     day_order = {"ចន្ទ": 1, "អង្គារ": 2, "ពុធ": 3, "ព្រហស្បតិ៍": 4, "សុក្រ": 5, "សៅរ៍": 6, "អាទិត្យ": 7}
     
@@ -568,6 +574,9 @@ def get_school_menu_overview(conn, school_name):
 
 def get_menu_by_day(conn, school_name, day_of_week):
     """ស្វែងរកមុខម្ហូបតាមថ្ងៃសម្រាប់សាលាជាក់លាក់"""
+    if not school_name or school_name == "គ្មានសាលា" or not day_of_week:
+        return None
+
     c = conn.cursor()
     row = c.execute("""
         SELECT id, menu_name, day_of_week, meal_type, target_students
@@ -662,6 +671,12 @@ def generate_official_menu_excel(conn, school_name, month_name="មីនា", y
     """
     បង្កើតឯកសារ Excel ផ្លូវការស្របតាមសន្លឹក «ចំនួនសរុប ខាងកើត» និងទម្រង់ស្ដង់ដារ MoEYS SFIS
     """
+    if not school_name or school_name == "គ្មានសាលា":
+        wb = openpyxl.Workbook()
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
     c = conn.cursor()
     loc_row = c.execute("""
         SELECT province, district, commune, village
@@ -858,6 +873,8 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
         if not is_admin and user_dist:
             sel_dist = st.selectbox("ក្រុង/ស្រុក", [user_dist], key="menu_dist")
         else:
+            if "menu_dist" in st.session_state and st.session_state["menu_dist"] not in dist_list:
+                st.session_state["menu_dist"] = dist_list[0] if dist_list else "-- ទាំងអស់ --"
             sel_dist = st.selectbox("ក្រុង/ស្រុក", dist_list, key="menu_dist")
 
     with col_c:
@@ -866,6 +883,8 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
         if not is_admin and user_comm:
             sel_comm = st.selectbox("ឃុំ/សង្កាត់", [user_comm], key="menu_comm")
         else:
+            if "menu_comm" in st.session_state and st.session_state["menu_comm"] not in comm_list:
+                st.session_state["menu_comm"] = comm_list[0] if comm_list else "-- ទាំងអស់ --"
             sel_comm = st.selectbox("ឃុំ/សង្កាត់", comm_list, key="menu_comm")
 
     with col_s:
@@ -873,6 +892,14 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
         school_options = get_scoped_schools(p_for_d, d_for_c, c_for_s, prefix_all=False)
         if not school_options:
             school_options = ["គ្មានសាលា"]
+        
+        def_idx = 0
+        if user_school and user_school in school_options:
+            def_idx = school_options.index(user_school)
+
+        if "menu_school" in st.session_state and st.session_state["menu_school"] not in school_options:
+            st.session_state["menu_school"] = school_options[def_idx]
+
         sel_school = st.selectbox("សាលារៀន", school_options, key="menu_school")
 
     if sel_school == "គ្មានសាលា" or not sel_school:
@@ -963,7 +990,17 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                         bg_c, text_c, icon = day_colors.get(d_name, ("#f8fafc", "#334155", "⚪"))
                         m_obj = menus_by_day.get(d_name)
                         if m_obj:
-                            st.markdown(f"""
+                            pills_html = ""
+                            for ing in m_obj['ingredients']:
+                                cat_badge = "🥩" if ing['category'] == "ត្រី សាច់ ស៊ុត" else "🥬" if ing['category'] == "បន្លែ" else "🌾" if ing['category'] == "អង្ករ" else "🍳" if ing['category'] == "ប្រេងឆា" else "🧂"
+                                pills_html += f"""
+                                    <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 4px; background: white; padding: 4px 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                                        <span>{cat_badge} <b>{ing['item_name']}</b></span>
+                                        <span><b>{ing['total_qty']}</b> {ing['unit']} <span style="color: #64748b; font-size: 0.75rem;">({ing['total_cost']:,.0f}៛)</span></span>
+                                    </div>
+                                """
+
+                            card_html = f"""
                             <div style="background-color: {bg_c}; border: 1.5px solid {text_c}40; border-radius: 12px; padding: 14px; margin-bottom: 15px; min-height: 280px; box-shadow: 0 2px 5px rgba(0,0,0,0.04);">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                                     <span style="font-weight: bold; font-size: 1rem; color: {text_c};">{icon} ថ្ងៃ{d_name}</span>
@@ -972,27 +1009,16 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                                 <div style="font-size: 1.15rem; font-weight: bold; color: #0f172a; margin-bottom: 6px;">{m_obj['menu_name']}</div>
                                 <div style="font-size: 0.82rem; color: #475569; margin-bottom: 10px;">👥 សិស្ស៖ <b>{m_obj['target_students']} នាក់</b> | វដ្ត៖ {m_obj['cycle_week']}</div>
                                 <div style="border-top: 1px dashed {text_c}40; padding-top: 8px; margin-bottom: 8px;">
-                                    <div style="font-size: 0.8rem; font-weight: bold; color: #334155; margin-bottom: 4px;">🥗 គ្រឿងផ្សំ ({len(m_obj['ingredients'])} មុខ)៖</div>
-                            """, unsafe_allow_html=True)
-                            
-                            # Ingredients Pills
-                            for ing in m_obj['ingredients']:
-                                cat_badge = "🥩" if ing['category'] == "ត្រី សាច់ ស៊ុត" else "🥬" if ing['category'] == "បន្លែ" else "🌾" if ing['category'] == "អង្ករ" else "🍳" if ing['category'] == "ប្រេងឆា" else "🧂"
-                                st.markdown(f"""
-                                    <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 3px; background: white; padding: 3px 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
-                                        <span>{cat_badge} <b>{ing['item_name']}</b></span>
-                                        <span><b>{ing['total_qty']}</b> {ing['unit']} <span style="color: #64748b; font-size: 0.75rem;">({ing['total_cost']:,.0f}៛)</span></span>
-                                    </div>
-                                """, unsafe_allow_html=True)
-
-                            st.markdown(f"""
+                                    <div style="font-size: 0.8rem; font-weight: bold; color: #334155; margin-bottom: 6px;">🥗 គ្រឿងផ្សំ ({len(m_obj['ingredients'])} មុខ)៖</div>
+                                    {pills_html}
                                 </div>
-                                <div style="border-top: 1.5px solid {text_c}60; padding-top: 6px; margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+                                <div style="border-top: 1.5px solid {text_c}60; padding-top: 8px; margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
                                     <span style="font-size: 0.85rem; font-weight: bold; color: #334155;">💰 សរុបប្រចាំថ្ងៃ៖</span>
                                     <span style="font-size: 1rem; font-weight: bold; color: {text_c};">{m_obj['total_day_cost']:,.0f} ៛</span>
                                 </div>
                             </div>
-                            """, unsafe_allow_html=True)
+                            """
+                            st.markdown(card_html, unsafe_allow_html=True)
                         else:
                             st.markdown(f"""
                             <div style="background-color: #f8fafc; border: 1.5px dashed #cbd5e1; border-radius: 12px; padding: 20px; text-align: center; min-height: 280px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
@@ -1191,8 +1217,9 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                     """, (sel_school, act_comm, act_dist, act_prov, dish_name_input, edit_day, meal_type_input, target_st_input, note_input, now_str, now_str))
                     new_m_id = c.lastrowid
 
-                    # Save ingredients
-                    for r_ing in current_draft:
+                    # Save ingredients from edited_df if available, else current_draft
+                    items_to_save = edited_df.to_dict('records') if (edited_df is not None and not edited_df.empty) else current_draft
+                    for r_ing in items_to_save:
                         u_p = float(r_ing.get("unit_price") or 0)
                         q_v = float(r_ing.get("total_qty") or 0)
                         t_c = round(q_v * u_p, 2)
@@ -1204,6 +1231,7 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                         """, (new_m_id, r_ing["item_name"], r_ing.get("category", ""), r_ing.get("unit", "1គីឡូ"), q_v, u_p, t_c, r_ing.get("note", "")))
 
                     conn.commit()
+                    st.session_state[state_key] = items_to_save
                     st.success(f"✅ បានរក្សាទុកមុខម្ហូប «{dish_name_input}» សម្រាប់ថ្ងៃ{edit_day} ជោគជ័យ!")
                     st.rerun()
 
@@ -1266,11 +1294,13 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                 cat = r["ប្រភេទ"] or "ផ្សេងៗ"
                 cat_groups[cat] = cat_groups.get(cat, 0.0) + r["សរុបទឹកប្រាក់ (៛)"]
 
-            cat_cols = st.columns(len(cat_groups))
-            for i, (cat_name, cat_amt) in enumerate(cat_groups.items()):
-                with cat_cols[i]:
-                    pct = (cat_amt / matrix_data['grand_total_cost'] * 100) if matrix_data['grand_total_cost'] else 0
-                    st.metric(f"🏷️ {cat_name}", f"{cat_amt:,.0f} ៛", f"{pct:.1f}% នៃថវិកា")
+            if cat_groups:
+                num_cols = min(len(cat_groups), 5)
+                cat_cols = st.columns(num_cols)
+                for i, (cat_name, cat_amt) in enumerate(cat_groups.items()):
+                    with cat_cols[i % num_cols]:
+                        pct = (cat_amt / matrix_data['grand_total_cost'] * 100) if matrix_data['grand_total_cost'] else 0
+                        st.metric(f"🏷️ {cat_name}", f"{cat_amt:,.0f} ៛", f"{pct:.1f}% នៃថវិកា")
 
     # ================= TAB 5: បោះពុម្ព & ទាញយកឯកសារផ្លូវការ =================
     with tab_export:

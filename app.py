@@ -8194,7 +8194,7 @@ elif menu in ["📦 បញ្ជីគ្រប់គ្រងទំនិញ �
 # ================= ៤. គំរូ និងបញ្ជីមុខម្ហូបតាមសាលា (MoEYS SFIS) =================
 elif menu == "🍲 គំរូ និងបញ្ជីមុខម្ហូបតាមសាលា (MoEYS SFIS)":
   menu_data.render_school_menu_section(
-      conn, cursor, user_prov, user_dist, user_comm, user_school, is_admin,
+      conn, cursor, user_prov, user_dist, user_comm, user_sch, is_admin,
       get_scoped_district_choices, get_scoped_commune_choices, get_scoped_schools, get_school_location_info
   )
 
