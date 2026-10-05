@@ -17,7 +17,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from catalog_data import SUPPLIER_PRODUCT_CATALOG
 
 # Khmer Day of Week mapping
-KHMER_DAYS_OF_WEEK = ["ចន្ទ", "អង្គារ", "ពុធ", "ព្រហស្បតិ៍", "សុក្រ", "សៅរ៍"]
+KHMER_DAYS_OF_WEEK = ["ចន្ទ", "អង្គារ", "ពុធ", "ព្រហស្បតិ៍", "សុក្រ", "សៅរ៍", "អាទិត្យ"]
 KHMER_WEEKDAY_MAP = {0: "ចន្ទ", 1: "អង្គារ", 2: "ពុធ", 3: "ព្រហស្បតិ៍", 4: "សុក្រ", 5: "សៅរ៍", 6: "អាទិត្យ"}
 
 # ================= គំរូបញ្ជីមុខម្ហូបស្ដង់ដារ MoEYS SFIS =================
@@ -106,6 +106,20 @@ STANDARD_SFIS_TEMPLATES = {
                     {"item_name": "ផ្លែល្ពៅ", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 64.0, "qty_per_100": 6.4, "note": "វីតាមីន A ខ្ពស់ជំនួយភ្នែក"},
                     {"item_name": "អង្ករចម្រុះ", "category": "អង្ករ", "unit": "1គីឡូ", "gram_per_student": 100.0, "qty_per_100": 10.0, "note": "ស្បៀងគោល"},
                     {"item_name": "ប្រេងឆា", "category": "ប្រេងឆា", "unit": "1គីឡូ", "gram_per_student": 12.0, "qty_per_100": 1.2, "note": "ខ្លាញ់សម្រាប់ឆា"},
+                    {"item_name": "អំបិលអ៊ីយូត", "category": "អំបិល", "unit": "1គីឡូ", "gram_per_student": 3.0, "qty_per_100": 0.3, "note": "គ្រឿងផ្សំ"}
+                ]
+            },
+            {
+                "day": "អាទិត្យ",
+                "dish_name": "បបរគ្រឿងសាច់ជ្រូក និងសណ្ដែកបណ្ដុះ",
+                "meal_type": "អាហារពេលព្រឹក",
+                "description": "បបរគ្រឿងសាច់ជ្រូកក្តៅៗជាមួយសណ្ដែកបណ្ដុះ និងស្លឹកខ្ទឹម ងាយស្រួលញ៉ាំ ផ្តល់ថាមពលខ្ពស់",
+                "ingredients": [
+                    {"item_name": "សាច់ជ្រូក៣ជាន់", "category": "ត្រី សាច់ ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 22.0, "qty_per_100": 2.2, "note": "ប្រូតេអ៊ីន"},
+                    {"item_name": "សណ្តែកបណ្តុះ", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 30.0, "qty_per_100": 3.0, "note": "វីតាមីន C និងជាតិសរសៃ"},
+                    {"item_name": "ស្លឹកខ្ទឹម", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 10.0, "qty_per_100": 1.0, "note": "គ្រឿងបន្ថែមរសជាតិ"},
+                    {"item_name": "អង្ករចម្រុះ", "category": "អង្ករ", "unit": "1គីឡូ", "gram_per_student": 100.0, "qty_per_100": 10.0, "note": "ស្បៀងគោល"},
+                    {"item_name": "ប្រេងឆា", "category": "ប្រេងឆា", "unit": "1គីឡូ", "gram_per_student": 8.0, "qty_per_100": 0.8, "note": "បន្ថែមរសជាតិ"},
                     {"item_name": "អំបិលអ៊ីយូត", "category": "អំបិល", "unit": "1គីឡូ", "gram_per_student": 3.0, "qty_per_100": 0.3, "note": "គ្រឿងផ្សំ"}
                 ]
             }
@@ -200,10 +214,581 @@ STANDARD_SFIS_TEMPLATES = {
                     {"item_name": "ប្រេងឆា", "category": "ប្រេងឆា", "unit": "1គីឡូ", "gram_per_student": 12.0, "qty_per_100": 1.2, "note": "ខ្លាញ់"},
                     {"item_name": "អំបិលអ៊ីយូត", "category": "អំបិល", "unit": "1គីឡូ", "gram_per_student": 3.0, "qty_per_100": 0.3, "note": "គ្រឿងផ្សំ"}
                 ]
+            },
+            {
+                "day": "អាទិត្យ",
+                "dish_name": "ឆាត្រកួនសាច់ជ្រូក",
+                "meal_type": "អាហារពេលព្រឹក",
+                "description": "ឆាត្រកួនស្រស់សាច់ជ្រូក រសជាតិឈ្ងុយឆ្ងាញ់ សម្បូរជាតិដែក និងវីតាមីន A",
+                "ingredients": [
+                    {"item_name": "សាច់ជ្រូក៣ជាន់", "category": "ត្រី សាច់ ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 22.0, "qty_per_100": 2.2, "note": "ប្រូតេអ៊ីន"},
+                    {"item_name": "ត្រកួន", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 60.0, "qty_per_100": 6.0, "note": "ជាតិដែក និងវីតាមីន"},
+                    {"item_name": "អង្ករចម្រុះ", "category": "អង្ករ", "unit": "1គីឡូ", "gram_per_student": 100.0, "qty_per_100": 10.0, "note": "ស្បៀងគោល"},
+                    {"item_name": "ប្រេងឆា", "category": "ប្រេងឆា", "unit": "1គីឡូ", "gram_per_student": 12.0, "qty_per_100": 1.2, "note": "ខ្លាញ់សម្រាប់ឆា"},
+                    {"item_name": "អំបិលអ៊ីយូត", "category": "អំបិល", "unit": "1គីឡូ", "gram_per_student": 3.0, "qty_per_100": 0.3, "note": "គ្រឿងផ្សំ"}
+                ]
             }
         ]
     }
 }
+
+# ================= គំរូមុខម្ហូបស្ដង់ដារ MoEYS SFIS តាមថ្ងៃ =================
+SFIS_CATEGORIES = ["ត្រី/សាច់/ស៊ុត", "បន្លែ", "គ្រឿងទេស", "ប្រេងឆា", "អង្ករ", "អំបិល"]
+
+SFIS_PRESET_DISHES = {
+    "សម្លកកូរសាច់ជ្រូក": {
+        "dish_name": "សម្លកកូរសាច់ជ្រូក",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "សាច់ជ្រូក៣ជាន់", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 22.0, "qty_per_100": 2.2},
+            {"item_name": "ស្លឹកបាស", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 22.0, "qty_per_100": 2.2},
+            {"item_name": "ផ្លែល្ពៅ", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 17.0, "qty_per_100": 1.7},
+            {"item_name": "ល្ហុងខ្ចី", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 20.0, "qty_per_100": 2.0},
+            {"item_name": "សណ្តែកដីលីង", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 6.0, "qty_per_100": 0.6},
+        ]
+    },
+    "បាយឆាសណ្តែកកួរនិងស៊ុតទា": {
+        "dish_name": "បាយឆាសណ្តែកកួរនិងស៊ុតទា",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "ស៊ុតទា", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គ្រាប់", "gram_per_student": 0.35, "qty_per_100": 35.0},
+            {"item_name": "សណ្តែកគួរ", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 64.0, "qty_per_100": 6.4},
+        ]
+    },
+    "ស្ងោរស្ពៃសាច់ជ្រូក": {
+        "dish_name": "ស្ងោរស្ពៃសាច់ជ្រូក",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "សាច់ជ្រូក៣ជាន់", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 22.0, "qty_per_100": 2.2},
+            {"item_name": "ស្ពៃក្រញាញ់", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 64.0, "qty_per_100": 6.4},
+        ]
+    },
+    "សម្លម្ជូរគ្រឿងត្រីអណ្ដែង": {
+        "dish_name": "សម្លម្ជូរគ្រឿងត្រីអណ្ដែង",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "ត្រីអណ្តែង", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 24.0, "qty_per_100": 2.4},
+            {"item_name": "ត្រកួន", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 52.0, "qty_per_100": 5.2},
+        ]
+    },
+    "សម្លម្ជូរយួនត្រីផ្ទក់ (ត្រឡាច និងប៉េងប៉ោះ)": {
+        "dish_name": "សម្លម្ជូរយួនត្រីផ្ទក់ (ត្រឡាច និងប៉េងប៉ោះ)",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "ត្រីផ្ទក់", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 30.0, "qty_per_100": 3.0},
+            {"item_name": "ផ្លែត្រឡាច", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 33.0, "qty_per_100": 3.3},
+            {"item_name": "ប៉េងប៉ោះ", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 31.0, "qty_per_100": 3.1},
+        ]
+    },
+    "ឆាល្ពៅពងទា": {
+        "dish_name": "ឆាល្ពៅពងទា",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "ស៊ុតទា", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គ្រាប់", "gram_per_student": 0.35, "qty_per_100": 35.0},
+            {"item_name": "ផ្លែល្ពៅ", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 64.0, "qty_per_100": 6.4},
+        ]
+    },
+    "បបរគ្រឿងសាច់ជ្រូក និងសណ្ដែកបណ្ដុះ": {
+        "dish_name": "បបរគ្រឿងសាច់ជ្រូក និងសណ្ដែកបណ្ដុះ",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "សាច់ជ្រូក៣ជាន់", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 22.0, "qty_per_100": 2.2},
+            {"item_name": "សណ្តែកបណ្តុះ", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 30.0, "qty_per_100": 3.0},
+            {"item_name": "ស្លឹកខ្ទឹម", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 10.0, "qty_per_100": 1.0},
+        ]
+    },
+    "សម្លកកូរត្រីអណ្តែង": {
+        "dish_name": "សម្លកកូរត្រីអណ្តែង",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "ត្រីអណ្តែង", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 24.0, "qty_per_100": 2.4},
+            {"item_name": "ស្លឹកងប់", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 20.0, "qty_per_100": 2.0},
+            {"item_name": "ផ្លែល្ពៅ", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 17.0, "qty_per_100": 1.7},
+            {"item_name": "ននោងមូល", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 20.0, "qty_per_100": 2.0},
+            {"item_name": "សណ្តែកដីលីង", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 6.0, "qty_per_100": 0.6},
+        ]
+    },
+    "ឆាននោងនិងស៊ុតទា": {
+        "dish_name": "ឆាននោងនិងស៊ុតទា",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "ស៊ុតទា", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គ្រាប់", "gram_per_student": 0.35, "qty_per_100": 35.0},
+            {"item_name": "ននោងជ្រុង", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 60.0, "qty_per_100": 6.0},
+        ]
+    },
+    "ស្ងោរស្ពៃចង្កឹះត្រីប្រា": {
+        "dish_name": "ស្ងោរស្ពៃចង្កឹះត្រីប្រា",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "ត្រីប្រា", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 25.0, "qty_per_100": 2.5},
+            {"item_name": "ស្ពៃចង្កឹះ", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 60.0, "qty_per_100": 6.0},
+        ]
+    },
+    "ឆាបន្លែគ្រប់មុខសាច់ជ្រូក": {
+        "dish_name": "ឆាបន្លែគ្រប់មុខសាច់ជ្រូក",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "សាច់ជ្រូក៣ជាន់", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 22.0, "qty_per_100": 2.2},
+            {"item_name": "ផ្កាខាត់ណា", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 30.0, "qty_per_100": 3.0},
+            {"item_name": "ការ៉ុត", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 25.0, "qty_per_100": 2.5},
+            {"item_name": "ស្ពៃជើងទា", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 20.0, "qty_per_100": 2.0},
+        ]
+    },
+    "សម្លម្ជូរគ្រឿងត្រីប្រា": {
+        "dish_name": "សម្លម្ជូរគ្រឿងត្រីប្រា",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "ត្រីប្រា", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 25.0, "qty_per_100": 2.5},
+            {"item_name": "ត្រួយល្ពៅ", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 30.0, "qty_per_100": 3.0},
+            {"item_name": "ត្រកួន", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 30.0, "qty_per_100": 3.0},
+        ]
+    },
+    "បាយឆាពងទាការ៉ុត": {
+        "dish_name": "បាយឆាពងទាការ៉ុត",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "ស៊ុតទា", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គ្រាប់", "gram_per_student": 0.35, "qty_per_100": 35.0},
+            {"item_name": "ការ៉ុត", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 30.0, "qty_per_100": 3.0},
+            {"item_name": "សណ្តែកគួរ", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 30.0, "qty_per_100": 3.0},
+        ]
+    },
+    "ឆាត្រកួនសាច់ជ្រូក": {
+        "dish_name": "ឆាត្រកួនសាច់ជ្រូក",
+        "meal_type": "អាហារពេលព្រឹក",
+        "ingredients": [
+            {"item_name": "សាច់ជ្រូក៣ជាន់", "category": "ត្រី/សាច់/ស៊ុត", "unit": "1គីឡូ", "gram_per_student": 22.0, "qty_per_100": 2.2},
+            {"item_name": "ត្រកួន", "category": "បន្លែ", "unit": "1គីឡូ", "gram_per_student": 60.0, "qty_per_100": 6.0},
+        ]
+    }
+}
+
+DEFAULT_DAY_PRESET_DISHES = {
+    "ចន្ទ": "សម្លកកូរសាច់ជ្រូក",
+    "អង្គារ": "បាយឆាសណ្តែកកួរនិងស៊ុតទា",
+    "ពុធ": "ស្ងោរស្ពៃសាច់ជ្រូក",
+    "ព្រហស្បតិ៍": "សម្លម្ជូរគ្រឿងត្រីអណ្ដែង",
+    "សុក្រ": "សម្លម្ជូរយួនត្រីផ្ទក់ (ត្រឡាច និងប៉េងប៉ោះ)",
+    "សៅរ៍": "ឆាល្ពៅពងទា",
+    "អាទិត្យ": "បបរគ្រឿងសាច់ជ្រូក និងសណ្ដែកបណ្ដុះ"
+}
+
+DEFAULT_DAY_PRESETS = {
+    d: SFIS_PRESET_DISHES.get(dish, {"dish_name": dish, "meal_type": "អាហារពេលព្រឹក", "ingredients": []})
+    for d, dish in DEFAULT_DAY_PRESET_DISHES.items()
+}
+
+KHMER_NUM_MAP = str.maketrans("0123456789", "០១២៣៤៥៦៧៨៩")
+def to_khmer_digits(val):
+    """បំប្លែងលេខអារ៉ាប់ទៅជាលេខខ្មែរ"""
+    return str(val).translate(KHMER_NUM_MAP)
+
+KHMER_MONTHS = [
+    "មករា", "កុម្ភៈ", "មីនា", "មេសា", "ឧសភា", "មិថុនា",
+    "កក្កដា", "សីហា", "កញ្ញា", "តុលា", "វិច្ឆិកា", "ធ្នូ"
+]
+KHMER_MONTH_TO_NUM = {m: i + 1 for i, m in enumerate(KHMER_MONTHS)}
+
+def get_month_weekday_dates(year, month):
+    """
+    គណនាកាលបរិច្ឆេទទាំងអស់ក្នុងខែ តាមថ្ងៃនៃសប្ដាហ៍នីមួយៗ (ចន្ទ ដល់ អាទិត្យ)
+    ដូចទម្រង់ជាក់ស្តែងក្នុង MoEYS SFIS
+    """
+    import calendar
+    res = {d: [] for d in KHMER_DAYS_OF_WEEK}
+    _, num_days = calendar.monthrange(year, month)
+    m_name = KHMER_MONTHS[month - 1] if 1 <= month <= 12 else str(month)
+
+    for d_num in range(1, num_days + 1):
+        dt = date(year, month, d_num)
+        w_name = KHMER_WEEKDAY_MAP.get(dt.weekday())
+        if w_name in res:
+            kh_lbl = f"{to_khmer_digits(d_num)} {m_name} {to_khmer_digits(year)}"
+            res[w_name].append({
+                "date": dt,
+                "date_str": dt.strftime("%Y-%m-%d"),
+                "day_num": d_num,
+                "label": kh_lbl,
+                "label_kh": kh_lbl
+            })
+    return res
+
+def get_or_create_school_voucher(conn, school_name, date_str):
+    """ទាញយក ឬបង្កើតលេខសក្ខីប័ត្រស្វ័យប្រវត្ត ចាប់ផ្ដើមពី 001 តាមសាលានីមួយៗ"""
+    if not school_name:
+        return "001"
+    c = conn.cursor()
+    d_str = str(date_str).strip()[:10]
+    row = c.execute(
+        "SELECT voucher_no FROM daily_records WHERE school_name=? AND date=? AND voucher_no IS NOT NULL AND TRIM(voucher_no) != '' LIMIT 1",
+        (school_name, d_str)
+    ).fetchone()
+    if row and row[0]:
+        return str(row[0]).strip()
+
+    rows = c.execute(
+        "SELECT DISTINCT voucher_no FROM daily_records WHERE school_name=? AND voucher_no IS NOT NULL AND TRIM(voucher_no) != ''",
+        (school_name,)
+    ).fetchall()
+    nums = []
+    for r in rows:
+        val = str(r[0]).strip()
+        matches = re.findall(r'\d+', val)
+        if matches:
+            nums.append(int(matches[-1]))
+    next_val = max(nums) + 1 if nums else 1
+    return f"{next_val:03d}"
+
+def determine_phase_for_date(conn, school_name, date_val):
+    """កំណត់វគ្គ (វគ្គ១ ឬ វគ្គ២) ស្វ័យប្រវត្តតាមកាលបរិច្ឆេទ"""
+    c = conn.cursor()
+    d_str = str(date_val)[:10]
+    try:
+        row = c.execute("""
+            SELECT phase1_start, phase1_end, phase2_start, phase2_end
+            FROM suppliers
+            WHERE school_name=? OR school_name LIKE ?
+            LIMIT 1
+        """, (school_name, f"%{school_name}%")).fetchone()
+        if not row:
+            row = c.execute("SELECT phase1_start, phase1_end, phase2_start, phase2_end FROM suppliers LIMIT 1").fetchone()
+        if row:
+            p1_s, p1_e, p2_s, p2_e = row
+            if p1_s and p1_e and str(p1_s) <= d_str <= str(p1_e):
+                return "វគ្គ១"
+            if p2_s and p2_e and str(p2_s) <= d_str <= str(p2_e):
+                return "វគ្គ២"
+    except Exception:
+        pass
+    try:
+        day_num = int(d_str.split("-")[2])
+        return "វគ្គ១" if day_num <= 15 else "វគ្គ២"
+    except Exception:
+        return "វគ្គ១"
+
+def save_school_daily_requirements(conn, school_name, act_comm, act_dist, act_prov, days_menu_data, staple_data):
+    """
+    រក្សាទុកមុខម្ហូបប្រចាំថ្ងៃ (school_menus & menu_ingredients)
+    និងបង្កើត/បញ្ចូលទិន្នន័យទៅក្នុងតារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (daily_records)
+    ដោយស្វ័យប្រវត្តិសម្រាប់សាលានេះ តាមកាលបរិច្ឆេទដែលបានជ្រើសរើសក្នុងខែ
+    ព្រមទាំងស្បៀងគោលទុកបានយូរនៅថ្ងៃដើមខែ។
+    """
+    if not school_name or school_name == "គ្មានសាលា":
+        return {"success": False, "message": "សូមជ្រើសរើសសាលារៀនជាមុនសិន!"}
+
+    c = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    total_inserted_daily = 0
+    total_dates_recorded = set()
+    total_month_cost = 0.0
+
+    # Ensure columns exist in daily_records
+    c.execute("PRAGMA table_info(daily_records)")
+    dr_cols = [col[1] for col in c.fetchall()]
+    if "category" not in dr_cols:
+        try:
+            c.execute("ALTER TABLE daily_records ADD COLUMN category TEXT DEFAULT ''")
+        except Exception:
+            pass
+    if "menu_name" not in dr_cols:
+        try:
+            c.execute("ALTER TABLE daily_records ADD COLUMN menu_name TEXT DEFAULT ''")
+        except Exception:
+            pass
+
+    # ១. រក្សាទុកមុខម្ហូបប្រចាំសប្ដាហ៍ (៧ ថ្ងៃ) ចូលក្នុង school_menus និង menu_ingredients
+    for d_name, d_cfg in days_menu_data.items():
+        dish_name = d_cfg.get("dish_name", "").strip()
+        if not dish_name:
+            continue
+        meal_type = d_cfg.get("meal_type", "អាហារពេលព្រឹក")
+        target_st = int(d_cfg.get("target_students", 100))
+        ingredients = d_cfg.get("ingredients", [])
+
+        # Delete existing menu definition for this day
+        old_ids = [r[0] for r in c.execute("SELECT id FROM school_menus WHERE school_name=? AND day_of_week=?", (school_name, d_name)).fetchall()]
+        if old_ids:
+            c.executemany("DELETE FROM menu_ingredients WHERE menu_id=?", [(oid,) for oid in old_ids])
+            c.execute("DELETE FROM school_menus WHERE school_name=? AND day_of_week=?", (school_name, d_name))
+
+        c.execute("""
+            INSERT INTO school_menus (
+                school_name, commune, district, province,
+                menu_name, day_of_week, meal_type, target_students,
+                cycle_week, notes, is_active, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'កាលវិភាគ SFIS', 'បង្កើតតាមទម្រង់ SFIS', 1, ?, ?)
+        """, (school_name, act_comm, act_dist, act_prov, dish_name, d_name, meal_type, target_st, now_str, now_str))
+        new_m_id = c.lastrowid
+
+        # Insert menu ingredients
+        for ing in ingredients:
+            u_p = float(ing.get("unit_price") or 0)
+            if u_p <= 0:
+                u_p = get_active_item_price(conn, ing["item_name"], school_name, act_comm)
+            g_st = float(ing.get("gram_per_student") or 0)
+            unit_n = ing.get("unit", "1គីឡូ")
+            
+            if "គ្រាប់" in unit_n:
+                d_qty = round(target_st * g_st, 1)
+            else:
+                d_qty = round((target_st * g_st) / 1000.0, 2)
+                if d_qty <= 0:
+                    d_qty = float(ing.get("total_qty") or 1.0)
+            t_c = round(d_qty * u_p, 2)
+
+            c.execute("""
+                INSERT INTO menu_ingredients (
+                    menu_id, item_name, category, unit,
+                    gram_per_student, total_qty, unit_price, total_cost, note
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (new_m_id, ing["item_name"], ing.get("category", "បន្លែ"), unit_n, g_st, d_qty, u_p, t_c, ing.get("note", "")))
+
+        # ២. បញ្ចូលតម្រូវការស្បៀងប្រចាំថ្ងៃ (daily_records) តាមកាលបរិច្ឆេទដែលបានធីក (Checked Dates)
+        active_dates = d_cfg.get("active_dates", d_cfg.get("checked_dates", []))
+        for dt_info in active_dates:
+            if not dt_info.get("enabled", True):
+                continue
+            date_str = str(dt_info.get("date", dt_info.get("date_str", ""))).strip()
+            if not date_str:
+                continue
+            cur_students = int(dt_info.get("students", target_st))
+            v_no = get_or_create_school_voucher(conn, school_name, date_str)
+            phase_val = determine_phase_for_date(conn, school_name, date_str)
+            total_dates_recorded.add(date_str)
+
+            for ing in ingredients:
+                itm_name = ing["item_name"].strip()
+                cat_name = ing.get("category", "បន្លែ")
+                unit_n = ing.get("unit", "1គីឡូ")
+                g_st = float(ing.get("gram_per_student") or 0)
+                
+                # If staple food is managed as monthly bulk, exclude daily duplicate
+                staple_is_active = staple_data.get("include", staple_data.get("enabled", False))
+                if staple_is_active and cat_name in ["អង្ករ", "ប្រេងឆា", "អំបិល"]:
+                    continue
+
+                if "គ្រាប់" in unit_n:
+                    rec_qty = round(cur_students * g_st, 1)
+                else:
+                    rec_qty = round((cur_students * g_st) / 1000.0, 2)
+                    if rec_qty <= 0:
+                        rec_qty = float(ing.get("qty_per_day", ing.get("total_qty", 1.0)))
+
+                u_p = float(ing.get("unit_price") or 0)
+                if u_p <= 0:
+                    u_p = get_active_item_price(conn, itm_name, school_name, act_comm)
+                tot_p = round(rec_qty * u_p, 2)
+                total_month_cost += tot_p
+
+                # Upsert into daily_records
+                ex_row = c.execute("""
+                    SELECT id FROM daily_records 
+                    WHERE school_name=? AND date=? AND item_name=?
+                """, (school_name, date_str, itm_name)).fetchone()
+
+                if ex_row:
+                    c.execute("""
+                        UPDATE daily_records 
+                        SET quantity=?, unit_price=?, total_price=?, phase=?, voucher_no=?, consumption_date=?, category=?, menu_name=?
+                        WHERE id=?
+                    """, (rec_qty, u_p, tot_p, phase_val, v_no, date_str, cat_name, dish_name, ex_row[0]))
+                else:
+                    c.execute("""
+                        INSERT INTO daily_records (
+                            date, school_name, item_name, phase, quantity, unit_price, total_price, voucher_no, consumption_date, category, menu_name
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (date_str, school_name, itm_name, phase_val, rec_qty, u_p, tot_p, v_no, date_str, cat_name, dish_name))
+                total_inserted_daily += 1
+
+    # ៣. បញ្ចូលស្បៀងគោលទុកបានយូរ នៅថ្ងៃដើមខែ (Non-perishable Staples at Beginning of Month)
+    if staple_data.get("include", staple_data.get("enabled", True)):
+        staple_date = str(staple_data.get("delivery_date", "")).strip()
+        if staple_date:
+            staple_vno = get_or_create_school_voucher(conn, school_name, staple_date)
+            staple_phase = determine_phase_for_date(conn, school_name, staple_date)
+            total_dates_recorded.add(staple_date)
+
+            for st_itm in staple_data.get("items", []):
+                s_name = st_itm["item_name"].strip()
+                s_cat = st_itm.get("category", "ស្បៀងគោល")
+                s_qty = float(st_itm.get("quantity", st_itm.get("qty", 0.0)))
+                s_price = float(st_itm.get("unit_price", 0.0))
+                if s_price <= 0:
+                    s_price = get_active_item_price(conn, s_name, school_name, act_comm)
+                s_tot = round(s_qty * s_price, 2)
+                total_month_cost += s_tot
+
+                if s_qty > 0:
+                    ex_st = c.execute("""
+                        SELECT id FROM daily_records 
+                        WHERE school_name=? AND date=? AND item_name=?
+                    """, (school_name, staple_date, s_name)).fetchone()
+
+                    if ex_st:
+                        c.execute("""
+                            UPDATE daily_records 
+                            SET quantity=?, unit_price=?, total_price=?, phase=?, voucher_no=?, consumption_date=?, category=?, menu_name='ស្បៀងគោលប្រចាំខែ'
+                            WHERE id=?
+                        """, (s_qty, s_price, s_tot, staple_phase, staple_vno, staple_date, s_cat, ex_st[0]))
+                    else:
+                        c.execute("""
+                            INSERT INTO daily_records (
+                                date, school_name, item_name, phase, quantity, unit_price, total_price, voucher_no, consumption_date, category, menu_name
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ស្បៀងគោលប្រចាំខែ')
+                        """, (staple_date, school_name, s_name, staple_phase, s_qty, s_price, s_tot, staple_vno, staple_date, s_cat))
+                    total_inserted_daily += 1
+
+    conn.commit()
+    return {
+        "success": True,
+        "total_records": total_inserted_daily,
+        "total_dates": len(total_dates_recorded),
+        "total_cost": total_month_cost,
+        "school_name": school_name
+    }
+
+def get_school_daily_records(conn, school_name, year, month):
+    """ទាញយកទិន្នន័យតម្រូវការស្បៀងប្រចាំថ្ងៃរបស់សាលាក្នុងខែដែលបានជ្រើសរើស"""
+    if not school_name or school_name == "គ្មានសាលា":
+        return []
+    c = conn.cursor()
+    m_str = f"{year:04d}-{month:02d}%"
+    rows = c.execute("""
+        SELECT date, school_name, item_name, phase, quantity, unit_price, total_price, voucher_no, consumption_date, category, menu_name
+        FROM daily_records
+        WHERE school_name=? AND date LIKE ?
+        ORDER BY date ASC, id ASC
+    """, (school_name, m_str)).fetchall()
+    
+    result = []
+    for r in rows:
+        d_val = r[0]
+        try:
+            dt_obj = datetime.strptime(d_val, "%Y-%m-%d")
+            w_name = KHMER_WEEKDAY_MAP.get(dt_obj.weekday(), "")
+        except Exception:
+            w_name = ""
+        result.append({
+            "date": r[0],
+            "day_name": w_name,
+            "school_name": r[1],
+            "item_name": r[2],
+            "phase": r[3] or "វគ្គ១",
+            "quantity": float(r[4] or 0),
+            "unit_price": float(r[5] or 0),
+            "total_price": float(r[6] or 0),
+            "voucher_no": r[7] or "",
+            "consumption_date": r[8] or r[0],
+            "category": r[9] or "ផ្សេងៗ",
+            "menu_name": r[10] or ""
+        })
+    return result
+
+def generate_daily_requirements_excel(conn, school_name, year, month, records):
+    """បង្កើតឯកសារ Excel តារាងតម្រូវការស្បៀងប្រចាំថ្ងៃតាមសាលារៀន"""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "តម្រូវការស្បៀងប្រចាំថ្ងៃ"
+
+    font_title = Font(name="Khmer OS Muol Light", size=13, bold=True, color="002060")
+    font_sub = Font(name="Khmer OS Muol Light", size=10, bold=True, color="000000")
+    font_header = Font(name="Khmer OS Siemreap", size=10, bold=True, color="FFFFFF")
+    font_data = Font(name="Khmer OS Siemreap", size=9)
+    font_bold = Font(name="Khmer OS Siemreap", size=9, bold=True)
+    
+    fill_header = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+    fill_total = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
+
+    thin_border = Border(
+        left=Side(style='thin', color='B0C4DE'),
+        right=Side(style='thin', color='B0C4DE'),
+        top=Side(style='thin', color='B0C4DE'),
+        bottom=Side(style='thin', color='B0C4DE')
+    )
+
+    align_center = Alignment(horizontal='center', vertical='center')
+    align_left = Alignment(horizontal='left', vertical='center')
+    align_right = Alignment(horizontal='right', vertical='center')
+
+    # Header
+    ws.merge_cells("A1:I1")
+    ws["A1"] = "ព្រះរាជាណាចក្រកម្ពុជា"
+    ws["A1"].font = font_sub
+    ws["A1"].alignment = align_center
+
+    ws.merge_cells("A2:I2")
+    ws["A2"] = "ជាតិ សាសនា ព្រះមហាក្សត្រ"
+    ws["A2"].font = font_sub
+    ws["A2"].alignment = align_center
+
+    m_name = KHMER_MONTHS[month - 1] if 1 <= month <= 12 else str(month)
+    ws.merge_cells("A4:I4")
+    ws["A4"] = f"តារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ - សាលាបឋមសិក្សា៖ {school_name}"
+    ws["A4"].font = font_title
+    ws["A4"].alignment = align_center
+
+    ws.merge_cells("A5:I5")
+    ws["A5"] = f"សម្រាប់ខែ៖ {m_name} ឆ្នាំ {year}"
+    ws["A5"].font = font_bold
+    ws["A5"].alignment = align_center
+
+    headers = ["ល.រ", "កាលបរិច្ឆេទ", "ថ្ងៃនៃសប្ដាហ៍", "មុខទំនិញ/ស្បៀង", "ប្រភេទ", "បរិមាណ", "តម្លៃរាយ (៛)", "សរុបទឹកប្រាក់ (៛)", "លេខសក្ខីប័ត្រ"]
+    for col_idx, h_text in enumerate(headers, 1):
+        cell = ws.cell(7, col_idx, h_text)
+        cell.font = font_header
+        cell.fill = fill_header
+        cell.alignment = align_center
+        cell.border = thin_border
+
+    ws.row_dimensions[7].height = 26
+
+    curr_row = 8
+    tot_cost = 0.0
+    for idx, r in enumerate(records, 1):
+        ws.cell(curr_row, 1, idx).alignment = align_center
+        ws.cell(curr_row, 2, r["date"]).alignment = align_center
+        ws.cell(curr_row, 3, r["day_name"]).alignment = align_center
+        ws.cell(curr_row, 4, r["item_name"]).alignment = align_left
+        ws.cell(curr_row, 5, r.get("category", "")).alignment = align_center
+        ws.cell(curr_row, 6, r["quantity"]).alignment = align_right
+        ws.cell(curr_row, 7, r["unit_price"]).alignment = align_right
+        ws.cell(curr_row, 8, r["total_price"]).alignment = align_right
+        ws.cell(curr_row, 9, r.get("voucher_no", "")).alignment = align_center
+
+        for c_idx in range(1, 10):
+            ws.cell(curr_row, c_idx).font = font_data
+            ws.cell(curr_row, c_idx).border = thin_border
+            ws.cell(curr_row, 7).number_format = "#,##0"
+            ws.cell(curr_row, 8).number_format = "#,##0"
+            ws.cell(curr_row, 6).number_format = "#,##0.00"
+
+        tot_cost += r["total_price"]
+        curr_row += 1
+
+    # Total row
+    ws.merge_cells(start_row=curr_row, start_column=1, end_row=curr_row, end_column=7)
+    tot_cell = ws.cell(curr_row, 1, "សរុបថវិកាស្បៀងប្រចាំខែទាំងអស់ ៖")
+    tot_cell.font = font_bold
+    tot_cell.alignment = align_right
+    tot_cell.fill = fill_total
+
+    val_cell = ws.cell(curr_row, 8, tot_cost)
+    val_cell.font = Font(name="Khmer OS Siemreap", size=10, bold=True, color="B91C1C")
+    val_cell.alignment = align_right
+    val_cell.fill = fill_total
+    val_cell.number_format = "#,##0"
+
+    ws.cell(curr_row, 9, "").fill = fill_total
+    for c_idx in range(1, 10):
+        ws.cell(curr_row, c_idx).border = thin_border
+
+    col_widths = {1: 8, 2: 14, 3: 14, 4: 26, 5: 16, 6: 14, 7: 16, 8: 18, 9: 14}
+    for c_idx, w in col_widths.items():
+        col_letter = openpyxl.utils.get_column_letter(c_idx)
+        ws.column_dimensions[col_letter].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def init_menu_db(conn):
@@ -244,6 +829,21 @@ def init_menu_db(conn):
 
     c.execute("CREATE INDEX IF NOT EXISTS idx_school_menus_lookup ON school_menus(school_name, day_of_week)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_menu_ingredients_menu_id ON menu_ingredients(menu_id)")
+
+    # Ensure daily_records has category and menu_name columns
+    c.execute("PRAGMA table_info(daily_records)")
+    dr_cols = [col[1] for col in c.fetchall()]
+    if "category" not in dr_cols:
+        try:
+            c.execute("ALTER TABLE daily_records ADD COLUMN category TEXT DEFAULT ''")
+        except Exception:
+            pass
+    if "menu_name" not in dr_cols:
+        try:
+            c.execute("ALTER TABLE daily_records ADD COLUMN menu_name TEXT DEFAULT ''")
+        except Exception:
+            pass
+
     conn.commit()
 
 
@@ -928,7 +1528,7 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                 <span style="font-size: 0.9rem; color: #64748b; margin-left: 12px;">📍 ឃុំ៖ <b>{act_comm or 'មិនទាន់បញ្ជាក់'}</b> | ស្រុក៖ <b>{act_dist or 'មិនទាន់បញ្ជាក់'}</b> | ខេត្ត៖ <b>{act_prov or 'មិនទាន់បញ្ជាក់'}</b></span>
             </div>
             <div>
-                {'<span style="background: #dcfce7; color: #166534; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">✅ បានកំណត់មុខម្ហូបរួចរាល់</span>' if dish_count >= 6 else '<span style="background: #fef3c7; color: #92400e; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">⚠️ មិនទាន់គ្រប់ ៦ ថ្ងៃ</span>' if dish_count > 0 else '<span style="background: #fee2e2; color: #991b1b; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">❌ ពុំទាន់មានមុខម្ហូប</span>'}
+                {'<span style="background: #dcfce7; color: #166534; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">✅ បានកំណត់មុខម្ហូបរួចរាល់</span>' if dish_count >= 7 else '<span style="background: #fef3c7; color: #92400e; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">⚠️ មិនទាន់គ្រប់ ៧ ថ្ងៃ</span>' if dish_count > 0 else '<span style="background: #fee2e2; color: #991b1b; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.85rem;">❌ ពុំទាន់មានមុខម្ហូប</span>'}
             </div>
         </div>
     </div>
@@ -937,7 +1537,7 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
     # KPI Metrics
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     with kpi1:
-        st.metric("🍲 មុខម្ហូបក្នុងសប្ដាហ៍", f"{dish_count} មុខ", f"{dish_count}/៦ ថ្ងៃ" if dish_count < 6 else "ពេញលេញ")
+        st.metric("🍲 មុខម្ហូបក្នុងសប្ដាហ៍", f"{dish_count} មុខ", f"{dish_count}/៧ ថ្ងៃ" if dish_count < 7 else "ពេញលេញ")
     with kpi2:
         st.metric("👥 សិស្សទទួលទានគោលដៅ", f"{target_st:,} នាក់", "គណនាស្វ័យប្រវត្ត")
     with kpi3:
@@ -945,8 +1545,10 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
     with kpi4:
         st.metric("📅 ថវិកាស្បៀង ១ខែ (៤សប្ដាហ៍)", f"{tot_month_est:,.0f} ៛", "ប៉ាន់ស្មានតាមមុខម្ហូប")
 
-    # ៥ ផ្ទាំងបញ្ជា (Tabs)
-    tab_cards, tab_seed, tab_manual, tab_matrix, tab_export = st.tabs([
+    # ៧ ផ្ទាំងបញ្ជា (Tabs)
+    tab_builder, tab_daily_rec, tab_cards, tab_seed, tab_manual, tab_matrix, tab_export = st.tabs([
+        "📝 បង្កើតមុខម្ហូបតាមថ្ងៃ MoEYS SFIS",
+        "📋 តារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (Daily Records)",
         "📅 កាលវិភាគមុខម្ហូបប្រចាំសប្ដាហ៍ (Weekly Schedule)",
         "⚡ អនុវត្តគំរូស្ដង់ដារ MoEYS SFIS (One-Click Seed)",
         "➕ បញ្ចូល / កែសម្រួលមុខម្ហូប (Add & Edit Dishes)",
@@ -954,23 +1556,429 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
         "🖨️ បោះពុម្ព & ទាញយកឯកសារផ្លូវការ (Excel / Print)",
     ])
 
-    # ================= TAB 1: កាលវិភាគមុខម្ហូបប្រចាំសប្ដាហ៍ =================
+    # ================= TAB 1: បង្កើតមុខម្ហូបតាមថ្ងៃ MoEYS SFIS =================
+    with tab_builder:
+        st.subheader(f"📝 បង្កើតមុខម្ហូបតាមថ្ងៃ និងគណនាតម្រូវការស្បៀង (សាលា៖ {sel_school})")
+        st.caption("រៀបចំមុខម្ហូបប្រចាំថ្ងៃនៃសប្ដាហ៍ (៧ ថ្ងៃ៖ ចន្ទ-អាទិត្យ) ជ្រើសរើសកាលបរិច្ឆេទក្នុងខែ និងបន្ថែមស្បៀងគោលទុកបានយូរនៅដើមខែ ស្របតាមប្រព័ន្ធ MoEYS SFIS")
+
+        col_b_m, col_b_y, col_b_st, col_b_act = st.columns([1.2, 1, 1.2, 1.6])
+        with col_b_m:
+            sel_b_month_name = st.selectbox("📅 ជ្រើសរើសខែ", KHMER_MONTHS, index=10, key="bldr_month_sel")
+            b_month_num = KHMER_MONTH_TO_NUM.get(sel_b_month_name, 11)
+        with col_b_y:
+            b_year_num = st.number_input("ឆ្នាំ", min_value=2024, max_value=2035, value=2025, step=1, key="bldr_year_num")
+        with col_b_st:
+            b_target_st = st.number_input("👥 ចំនួនសិស្ស (នាក់)", min_value=1, max_value=5000, value=target_st or 100, step=10, key="bldr_target_st")
+        with col_b_act:
+            st.write("")
+            if st.button("⚡ ផ្ទុកគំរូស្ដង់ដារ MoEYS SFIS (៧ ថ្ងៃ)", use_container_width=True, key="btn_bldr_seed_defaults"):
+                for d_k, d_v in DEFAULT_DAY_PRESETS.items():
+                    st.session_state[f"bldr_dish_name_{sel_school}_{d_k}"] = d_v["dish_name"]
+                    st.session_state[f"bldr_ings_{sel_school}_{d_k}"] = [dict(ig) for ig in d_v["ingredients"]]
+                st.success("✅ បានផ្ទុកគំរូស្ដង់ដារ MoEYS SFIS ទាំង ៧ ថ្ងៃជោគជ័យ!")
+                st.rerun()
+
+        # ទាញយកកាលបរិច្ឆេទតាមថ្ងៃនៃសប្ដាហ៍សម្រាប់ខែនេះ
+        month_weekday_dates = get_month_weekday_dates(b_year_num, b_month_num)
+
+        # រៀបចំ data structure សម្រាប់រក្សាទុក
+        builder_days_payload = {}
+
+        # Product options for ingredients
+        catalog_item_names = [p["name"] for p in SUPPLIER_PRODUCT_CATALOG]
+
+        # បង្ហាញកាតមុខម្ហូបទាំង ៧ ថ្ងៃ (ចន្ទ ដល់ អាទិត្យ) តាមទម្រង់ MoEYS SFIS
+        for d_name in KHMER_DAYS_OF_WEEK:
+            def_preset = DEFAULT_DAY_PRESETS.get(d_name, {"dish_name": "សម្លកកូរសាច់ជ្រូក", "ingredients": []})
+            existing_d_menu = next((m for m in school_menus if m["day_of_week"] == d_name), None)
+
+            # Session state keys for ingredients and dish name
+            day_ing_key = f"bldr_ings_{sel_school}_{d_name}"
+            day_dish_key = f"bldr_dish_name_{sel_school}_{d_name}"
+
+            if day_ing_key not in st.session_state:
+                if existing_d_menu and existing_d_menu.get("ingredients"):
+                    st.session_state[day_ing_key] = [
+                        {
+                            "category": ig.get("category") or "បន្លែ",
+                            "item_name": ig.get("item_name"),
+                            "unit": ig.get("unit") or "1គីឡូ",
+                            "gram_per_student": float(ig.get("gram_per_student") or 20.0),
+                            "qty_per_100": float(ig.get("total_qty") or 2.0) / max(1, (b_target_st / 100.0)),
+                            "unit_price": float(ig.get("unit_price") or 0.0)
+                        }
+                        for ig in existing_d_menu["ingredients"]
+                    ]
+                else:
+                    st.session_state[day_ing_key] = [dict(ig) for ig in def_preset.get("ingredients", [])]
+
+            if day_dish_key not in st.session_state:
+                st.session_state[day_dish_key] = existing_d_menu["menu_name"] if existing_d_menu else def_preset["dish_name"]
+
+            # UI Box container styled exactly like MoEYS SFIS screenshot
+            st.markdown(f"""
+            <div style="background-color: #cbe3e7; border: 1.5px solid #8cb9c5; border-radius: 8px; padding: 12px 16px; margin-top: 14px; margin-bottom: 6px;">
+                <div style="font-weight: bold; font-size: 1.08rem; color: #0f172a; margin-bottom: 6px;">
+                    📅 ថ្ងៃ{d_name}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            col_d_left, col_d_mid, col_d_right = st.columns([1.3, 1.4, 2.3])
+
+            with col_d_left:
+                use_preset = st.checkbox("ជ្រើសមុខម្ហូបមានស្រាប់", value=True, key=f"chk_preset_{d_name}")
+                if use_preset:
+                    preset_keys = list(SFIS_PRESET_DISHES.keys())
+                    cur_val = st.session_state[day_dish_key]
+                    p_idx = preset_keys.index(cur_val) if cur_val in preset_keys else 0
+                    chosen_p = st.selectbox(
+                        "មុខម្ហូប MoEYS SFIS",
+                        preset_keys,
+                        index=p_idx,
+                        key=f"sel_preset_{d_name}",
+                        label_visibility="collapsed"
+                    )
+                    if chosen_p != st.session_state[day_dish_key]:
+                        st.session_state[day_dish_key] = chosen_p
+                        st.session_state[day_ing_key] = [dict(ig) for ig in SFIS_PRESET_DISHES[chosen_p]["ingredients"]]
+                        st.rerun()
+
+                cur_dish_name = st.text_input(
+                    "ឈ្មោះមុខម្ហូប",
+                    value=st.session_state[day_dish_key],
+                    key=f"inp_dish_{d_name}",
+                    label_visibility="collapsed"
+                )
+                st.session_state[day_dish_key] = cur_dish_name
+
+            with col_d_mid:
+                st.markdown("<div style='font-size: 0.85rem; font-weight: bold; color: #1e3a8a; margin-bottom: 4px;'>កាលបរិច្ឆេទ និងចំនួនសិស្ស៖</div>", unsafe_allow_html=True)
+                dates_for_day = month_weekday_dates.get(d_name, [])
+                day_active_dates = []
+                for dt in dates_for_day:
+                    c_dt1, c_dt2 = st.columns([2.2, 1.3])
+                    with c_dt1:
+                        chk_dt = st.checkbox(dt["label"], value=True, key=f"dt_chk_{d_name}_{dt['date_str']}")
+                    with c_dt2:
+                        st_cnt = st.number_input(
+                            "",
+                            min_value=1,
+                            max_value=5000,
+                            value=b_target_st,
+                            step=1,
+                            key=f"st_cnt_{d_name}_{dt['date_str']}",
+                            label_visibility="collapsed"
+                        )
+                    if chk_dt:
+                        day_active_dates.append({
+                            "date": dt["date_str"],
+                            "label": dt["label"],
+                            "students": st_cnt
+                        })
+
+            with col_d_right:
+                st.markdown("<div style='font-size: 0.85rem; font-weight: bold; color: #1e3a8a; margin-bottom: 4px;'>គ្រឿងផ្សំ និងប្រភេទស្បៀង (SFIS)៖</div>", unsafe_allow_html=True)
+                cur_ings = st.session_state[day_ing_key]
+                processed_ings = []
+                for idx, ig in enumerate(cur_ings):
+                    c_c1, c_c2, c_c3 = st.columns([1.2, 1.8, 1.0])
+                    with c_c1:
+                        cat_list = SFIS_CATEGORIES
+                        c_idx = cat_list.index(ig["category"]) if ig["category"] in cat_list else 0
+                        sel_cat = st.selectbox(
+                            "",
+                            cat_list,
+                            index=c_idx,
+                            key=f"cat_{d_name}_{idx}",
+                            label_visibility="collapsed"
+                        )
+                    with c_c2:
+                        item_opts = [ig["item_name"]] + [n for n in catalog_item_names if n != ig["item_name"]]
+                        sel_item = st.selectbox(
+                            "",
+                            item_opts,
+                            index=0,
+                            key=f"item_{d_name}_{idx}",
+                            label_visibility="collapsed"
+                        )
+                    with c_c3:
+                        u_match = next((p["unit"] for p in SUPPLIER_PRODUCT_CATALOG if p["name"] == sel_item), ig.get("unit", "1គីឡូ"))
+                        g_std = ig.get("gram_per_student", 20.0)
+                        if "គ្រាប់" in u_match:
+                            calc_qty = round(b_target_st * g_std, 1)
+                        else:
+                            calc_qty = round((b_target_st * g_std) / 1000.0, 2)
+                            if calc_qty <= 0:
+                                calc_qty = round(ig.get("qty_per_100", 1.0) * (b_target_st / 100.0), 2)
+                        
+                        qty_val = st.number_input(
+                            "",
+                            min_value=0.01,
+                            value=max(0.01, calc_qty),
+                            step=0.5,
+                            key=f"qty_{d_name}_{idx}",
+                            label_visibility="collapsed"
+                        )
+
+                    u_price = get_active_item_price(conn, sel_item, sel_school, act_comm)
+                    processed_ings.append({
+                        "category": sel_cat,
+                        "item_name": sel_item,
+                        "unit": u_match,
+                        "gram_per_student": g_std,
+                        "qty_per_day": qty_val,
+                        "unit_price": u_price,
+                        "total_cost": qty_val * u_price
+                    })
+
+                # Expander to add an ingredient
+                with st.expander(f"➕ បន្ថែមគ្រឿងផ្សំថ្មីសម្រាប់ថ្ងៃ{d_name}", expanded=False):
+                    ca_1, ca_2, ca_3 = st.columns([1.2, 1.8, 1.0])
+                    with ca_1:
+                        new_cat = st.selectbox("ប្រភេទ", SFIS_CATEGORIES, key=f"new_cat_{d_name}")
+                    with ca_2:
+                        new_item = st.selectbox("ឈ្មោះទំនិញ", catalog_item_names, key=f"new_item_{d_name}")
+                    with ca_3:
+                        new_unit = next((p["unit"] for p in SUPPLIER_PRODUCT_CATALOG if p["name"] == new_item), "1គីឡូ")
+                        new_qty = st.number_input("បរិមាណ", min_value=0.1, value=2.0 if "គីឡូ" in new_unit else 35.0, key=f"new_qty_{d_name}")
+                    
+                    if st.button(f"បញ្ចូលគ្រឿងផ្សំនេះចូលថ្ងៃ{d_name}", key=f"btn_add_ig_{d_name}"):
+                        st.session_state[day_ing_key].append({
+                            "category": new_cat,
+                            "item_name": new_item,
+                            "unit": new_unit,
+                            "gram_per_student": (new_qty * 1000.0 / b_target_st) if "គីឡូ" in new_unit else (new_qty / b_target_st),
+                            "qty_per_100": (new_qty / (b_target_st / 100.0)),
+                            "unit_price": get_active_item_price(conn, new_item, sel_school, act_comm)
+                        })
+                        st.rerun()
+
+                st.markdown(f"""
+                <div style="text-align: right; margin-top: 6px;">
+                    <span style="background: white; border: 1px solid #7eaab5; padding: 4px 10px; border-radius: 4px; font-weight: bold; color: #1e3a8a; font-size: 0.85rem;">
+                        បន្ថែមមុខម្ហូបសម្រាប់ថ្ងៃ{d_name} ＋
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Store in builder payload
+            builder_days_payload[d_name] = {
+                "day_name": d_name,
+                "dish_name": cur_dish_name,
+                "meal_type": "អាហារពេលព្រឹក",
+                "target_students": b_target_st,
+                "ingredients": processed_ings,
+                "active_dates": day_active_dates
+            }
+
+        # ================= ស្បៀងគោលទុកបានយូរ នៅថ្ងៃដើមខែ =================
+        st.markdown("---")
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 100%); border: 1.5px solid #7dd3fc; border-radius: 12px; padding: 18px 22px; margin-top: 15px; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                <span style="font-size: 1.5rem;">🌾</span>
+                <span style="font-size: 1.15rem; font-weight: bold; color: #0369a1;">ស្បៀងគោលទុកបានយូរ (ផ្គត់ផ្គង់នៅថ្ងៃដើមខែ)</span>
+            </div>
+            <div style="font-size: 0.88rem; color: #334155;">
+                យោងតាមគោលការណ៍ណែនាំ <b>MoEYS SFIS</b> និងកម្មវិធីស្បៀងអាហារពិភពលោក (WFP)៖ មុខទំនិញស្បៀងគោលដែលទុកបានយូរ (<b>អង្ករ, ប្រេងឆា, អំបិលអ៊ីយ៉ូត, ទឹកត្រី</b>) ត្រូវបានផ្គត់ផ្គង់ និងបញ្ជាទិញជាដុំ <b>នៅថ្ងៃដើមខែ</b> សម្រាប់ទុកប្រើប្រាស់ពេញមួយខែ។ នៅពេលចុចរក្សាទុក ប្រព័ន្ធនឹងបង្កើតកំណត់ត្រាតម្រូវការស្បៀងប្រចាំថ្ងៃ (Daily Records) នៅថ្ងៃដើមខែនេះដោយស្វ័យប្រវត្តិ។
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_st1, col_st2, col_st3 = st.columns([1.2, 1.2, 2.5])
+        with col_st1:
+            include_staples = st.checkbox("✅ បញ្ចូលស្បៀងគោលទុកបានយូរនៅដើមខែ", value=True, key="chk_include_staples")
+        with col_st2:
+            def_start_date = f"{b_year_num:04d}-{b_month_num:02d}-01"
+            staple_deliv_date = st.text_input("📅 កាលបរិច្ឆេទចែកផ្ដល់ (ដើមខែ)", value=def_start_date, key="inp_staple_deliv_date")
+        with col_st3:
+            staple_feeding_days = st.number_input("ចំនួនថ្ងៃហូបអាហារក្នុងខែ (សម្រាប់គណនាស្បៀងគោល)", min_value=1, max_value=31, value=24, step=1, key="inp_staple_feeding_days")
+
+        # គណនាបរិមាណស្បៀងគោលស្វ័យប្រវត្តិតាមបទដ្ឋាន SFIS / WFP
+        rice_kg = round((b_target_st * 100.0 * staple_feeding_days) / 1000.0, 1)
+        oil_lit = round((b_target_st * 10.0 * staple_feeding_days) / 1000.0, 1)
+        salt_kg = round((b_target_st * 3.0 * staple_feeding_days) / 1000.0, 1)
+        sauce_lit = round((b_target_st * 10.0 * staple_feeding_days) / 1000.0, 1)
+
+        p_rice = get_active_item_price(conn, "អង្ករ", sel_school, act_comm) or 3000.0
+        p_oil = get_active_item_price(conn, "ប្រេងឆា", sel_school, act_comm) or 8500.0
+        p_salt = get_active_item_price(conn, "អំបិល", sel_school, act_comm) or 1500.0
+        p_sauce = get_active_item_price(conn, "ទឹកត្រី", sel_school, act_comm) or 3500.0
+
+        st.markdown("<div style='font-size: 0.9rem; font-weight: bold; color: #0f172a; margin-bottom: 8px;'>បញ្ជីបរិមាណ និងតម្លៃស្បៀងគោលប្រចាំខែ៖</div>", unsafe_allow_html=True)
+        col_sp1, col_sp2, col_sp3, col_sp4 = st.columns(4)
+        with col_sp1:
+            fin_rice_kg = st.number_input("🌾 អង្ករ (គីឡូក្រាម)", min_value=0.0, value=float(rice_kg), step=5.0, key="inp_rice_kg")
+            fin_rice_pr = st.number_input("តម្លៃអង្ករ (៛/គ.ក)", min_value=0.0, value=float(p_rice), step=100.0, key="inp_rice_pr")
+        with col_sp2:
+            fin_oil_lit = st.number_input("🍳 ប្រេងឆា (លីត្រ)", min_value=0.0, value=float(oil_lit), step=1.0, key="inp_oil_lit")
+            fin_oil_pr = st.number_input("តម្លៃប្រេងឆា (៛/លីត្រ)", min_value=0.0, value=float(p_oil), step=100.0, key="inp_oil_pr")
+        with col_sp3:
+            fin_salt_kg = st.number_input("🧂 អំបិលអ៊ីយ៉ូត (គីឡូក្រាម)", min_value=0.0, value=float(salt_kg), step=0.5, key="inp_salt_kg")
+            fin_salt_pr = st.number_input("តម្លៃអំបិល (៛/គ.ក)", min_value=0.0, value=float(p_salt), step=100.0, key="inp_salt_pr")
+        with col_sp4:
+            fin_sauce_lit = st.number_input("🫙 ទឹកត្រី/ទឹកស៊ីអ៊ីវ (លីត្រ)", min_value=0.0, value=float(sauce_lit), step=1.0, key="inp_sauce_lit")
+            fin_sauce_pr = st.number_input("តម្លៃទឹកត្រី (៛/លីត្រ)", min_value=0.0, value=float(p_sauce), step=100.0, key="inp_sauce_pr")
+
+        staples_payload = {
+            "include": include_staples,
+            "delivery_date": staple_deliv_date,
+            "items": [
+                {"item_name": "អង្ករ", "category": "អង្ករ", "unit": "1គីឡូ", "quantity": fin_rice_kg, "unit_price": fin_rice_pr},
+                {"item_name": "ប្រេងឆា", "category": "ប្រេងឆា", "unit": "លីត្រ", "quantity": fin_oil_lit, "unit_price": fin_oil_pr},
+                {"item_name": "អំបិល", "category": "អំបិល", "unit": "1គីឡូ", "quantity": fin_salt_kg, "unit_price": fin_salt_pr},
+                {"item_name": "ទឹកត្រី", "category": "គ្រឿងទេស", "unit": "លីត្រ", "quantity": fin_sauce_lit, "unit_price": fin_sauce_pr},
+            ]
+        }
+
+        tot_staple_cost = sum(it["quantity"] * it["unit_price"] for it in staples_payload["items"]) if include_staples else 0
+        st.markdown(f"""
+        <div style="background: #f1f5f9; padding: 8px 16px; border-radius: 6px; font-weight: bold; color: #1e3a8a; text-align: right; margin-top: 8px; margin-bottom: 20px;">
+            សរុបថវិកាស្បៀងគោលទុកបានយូរ (១ខែ) ៖ <span style="color: #0369a1; font-size: 1.05rem;">{tot_staple_cost:,.0f} ៛</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ប៊ូតុងរក្សាទុកធំ
+        st.markdown("---")
+        col_sav_btn, col_sav_sp = st.columns([2.5, 2])
+        with col_sav_btn:
+            if st.button(
+                f"💾 រក្សាទុកកាលវិភាគ និងបញ្ចូលទិន្នន័យទៅក្នុងតារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (សាលា៖ {sel_school})",
+                type="primary",
+                use_container_width=True,
+                key="btn_save_builder_and_daily_records"
+            ):
+                save_res = save_school_daily_requirements(
+                    conn=conn,
+                    school_name=sel_school,
+                    commune=act_comm,
+                    district=act_dist,
+                    province=act_prov,
+                    days_menu_data=builder_days_payload,
+                    staple_data=staples_payload
+                )
+                if save_res["success"]:
+                    st.success(f"""
+                    🎉 **រក្សាទុក និងបញ្ចូលទិន្នន័យស្បៀងជោគជ័យ!**
+                    - 🏫 សាលាបឋមសិក្សា៖ **{sel_school}**
+                    - 📅 ចំនួនថ្ងៃផ្គត់ផ្គង់ស្បៀង៖ **{save_res['total_dates']} ថ្ងៃ**
+                    - 📋 ចំនួនទិន្នន័យស្បៀងបានបញ្ចូល៖ **{save_res['total_records']} ជួរ** ចូលក្នុងតារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (Daily Records)
+                    - 💰 ថវិកាស្បៀងសរុបប្រចាំខែ៖ **{save_res['total_cost']:,.0f} ៛**
+                    """)
+                    st.balloons()
+                    st.rerun()
+
+    # ================= TAB 2: តារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ =================
+    with tab_daily_rec:
+        st.subheader(f"📋 តារាងតម្រូវការស្បៀងប្រចាំថ្ងៃ (សាលា៖ {sel_school})")
+        st.caption("ទិន្នន័យតម្រូវការស្បៀងដែលបានបញ្ចូល និងគណនាដោយស្វ័យប្រវត្តិតាមថ្ងៃនីមួយៗ ស្របតាមប្រព័ន្ធ MoEYS SFIS")
+
+        col_dr1, col_dr2, col_dr3 = st.columns([1.2, 1, 2])
+        with col_dr1:
+            sel_dr_month = st.selectbox("📅 ជ្រើសរើសខែ", KHMER_MONTHS, index=10, key="sel_dr_month_view")
+            dr_m_num = KHMER_MONTH_TO_NUM.get(sel_dr_month, 11)
+        with col_dr2:
+            sel_dr_year = st.number_input("ឆ្នាំ", min_value=2024, max_value=2035, value=2025, step=1, key="sel_dr_year_view")
+        with col_dr3:
+            st.write("")
+            records = get_school_daily_records(conn, sel_school, sel_dr_year, dr_m_num)
+            if records:
+                excel_daily_bytes = generate_daily_requirements_excel(conn, sel_school, sel_dr_year, dr_m_num, records)
+                st.download_button(
+                    label=f"📥 ទាញយកតារាងតម្រូវការស្បៀងជា Excel (.xlsx)",
+                    data=excel_daily_bytes,
+                    file_name=f"តម្រូវការស្បៀងប្រចាំថ្ងៃ_{sel_school}_{sel_dr_month}_{sel_dr_year}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    use_container_width=True,
+                    key="btn_dl_daily_excel"
+                )
+
+        if not records:
+            st.info(f"💡 ពុំទាន់មានទិន្នន័យតម្រូវការស្បៀងប្រចាំថ្ងៃសម្រាប់សាលា «**{sel_school}**» ក្នុងខែ {sel_dr_month} ឆ្នាំ {sel_dr_year} នៅឡើយទេ។")
+            st.markdown("""
+            👉 សូមចូលទៅកាន់ផ្ទាំង **📝 បង្កើតមុខម្ហូបតាមថ្ងៃ MoEYS SFIS** ដើម្បីជ្រើសរើសមុខម្ហូប និងកាលបរិច្ឆេទក្នុងខែ រួចចុចប៊ូតុង **រក្សាទុក** ដើម្បីបញ្ចូលទិន្នន័យស្វ័យប្រវត្តិ។
+            """)
+        else:
+            tot_days_cnt = len(set(r["date"] for r in records))
+            tot_items_cnt = len(records)
+            tot_weight_kg = sum(r["quantity"] for r in records if "គីឡូ" in r.get("item_name", "") or r.get("category") in ["បន្លែ", "ត្រី/សាច់/ស៊ុត", "អង្ករ"])
+            tot_req_cost = sum(r["total_price"] for r in records)
+
+            # Metric Cards
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                st.metric("📅 ចំនួនថ្ងៃផ្គត់ផ្គង់", f"{tot_days_cnt} ថ្ងៃ")
+            with m2:
+                st.metric("📦 ចំនួនមុខទំនិញសរុប", f"{tot_items_cnt} ជួរ")
+            with m3:
+                st.metric("⚖️ ទម្ងន់ស្បៀង (ប្រហាក់ប្រហែល)", f"{tot_weight_kg:,.1f} គ.ក")
+            with m4:
+                st.metric("💰 ថវិកាស្បៀងសរុប", f"{tot_req_cost:,.0f} ៛")
+
+            # Filters
+            col_f1, col_f2 = st.columns([1.5, 1.5])
+            with col_f1:
+                avail_dates = ["-- ទាំងអស់ --"] + sorted(list(set(r["date"] for r in records)))
+                filter_date = st.selectbox("🔍 ចម្រោះតាមកាលបរិច្ឆេទ", avail_dates, key="flt_dr_date")
+            with col_f2:
+                avail_cats = ["-- ទាំងអស់ --"] + sorted(list(set(r["category"] for r in records if r["category"])))
+                filter_cat = st.selectbox("🔍 ចម្រោះតាមប្រភេទស្បៀង", avail_cats, key="flt_dr_cat")
+
+            filtered_records = records
+            if filter_date != "-- ទាំងអស់ --":
+                filtered_records = [r for r in filtered_records if r["date"] == filter_date]
+            if filter_cat != "-- ទាំងអស់ --":
+                filtered_records = [r for r in filtered_records if r["category"] == filter_cat]
+
+            # Display table
+            df_display = pd.DataFrame([
+                {
+                    "កាលបរិច្ឆេទ": r["date"],
+                    "ថ្ងៃនៃសប្ដាហ៍": r["day_name"],
+                    "មុខម្ហូប": r["menu_name"],
+                    "ប្រភេទ": r["category"],
+                    "មុខទំនិញ/ស្បៀង": r["item_name"],
+                    "បរិមាណ": r["quantity"],
+                    "តម្លៃរាយ (៛)": f"{r['unit_price']:,.0f}",
+                    "សរុបទឹកប្រាក់ (៛)": f"{r['total_price']:,.0f}",
+                    "វគ្គ": r["phase"],
+                    "លេខសក្ខីប័ត្រ": r["voucher_no"]
+                }
+                for r in filtered_records
+            ])
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+            # Option to clear / regenerate
+            with st.expander("⚙️ ជម្រើសលុបទិន្នន័យខែនេះ ដើម្បីបង្កើតឡើងវិញ"):
+                st.warning("⚠️ ប្រសិនបើលោកអ្នកចង់លុបទិន្នន័យស្បៀងប្រចាំថ្ងៃនៃខែនេះទាំងអស់ដើម្បីបញ្ចូលថ្មី សូមចុចប៊ូតុងខាងក្រោម៖")
+                if st.button(f"🗑️ លុបទិន្នន័យស្បៀងខែ {sel_dr_month} ឆ្នាំ {sel_dr_year} របស់សាលានេះ", type="secondary", key="btn_clear_dr_month"):
+                    c_del = conn.cursor()
+                    m_pat = f"{sel_dr_year:04d}-{dr_m_num:02d}%"
+                    c_del.execute("DELETE FROM daily_records WHERE school_name=? AND date LIKE ?", (sel_school, m_pat))
+                    conn.commit()
+                    st.success(f"✅ បានលុបទិន្នន័យខែ {sel_dr_month} ឆ្នាំ {sel_dr_year} រួចរាល់!")
+                    st.rerun()
+
+    # ================= TAB 3: កាលវិភាគមុខម្ហូបប្រចាំសប្ដាហ៍ =================
     with tab_cards:
         if not school_menus:
             st.info(f"💡 សាលាបឋមសិក្សា «**{sel_school}**» មិនទាន់មានទិន្នន័យបញ្ជីមុខម្ហូបនៅឡើយទេ!")
             st.markdown("""
-            លោកអ្នកអាចជ្រើសរើសជម្រើសមួយក្នុងចំណោមពីរខាងក្រោម៖
-            1. ចុចផ្ទាំង **⚡ អនុវត្តគំរូស្ដង់ដារ MoEYS SFIS** ដើម្បីបញ្ចូលមុខម្ហូបផ្លូវការទាំង ៦ ថ្ងៃភ្លាមៗក្នុង ១ ឃ្លីក
-            2. ចុចផ្ទាំង **➕ បញ្ចូល / កែសម្រួលមុខម្ហូប** ដើម្បីបញ្ចូលមុខម្ហូបដោយដៃផ្ទាល់តាមការចង់បាន
+            លោកអ្នកអាចជ្រើសរើសជម្រើសមួយក្នុងចំណោមខាងក្រោម៖
+            1. ចុចផ្ទាំង **📝 បង្កើតមុខម្ហូបតាមថ្ងៃ MoEYS SFIS** ដើម្បីបង្កើតមុខម្ហូប និងកាលបរិច្ឆេទក្នុងខែ
+            2. ចុចផ្ទាំង **⚡ អនុវត្តគំរូស្ដង់ដារ MoEYS SFIS** ដើម្បីបញ្ចូលមុខម្ហូបផ្លូវការទាំង ៧ ថ្ងៃភ្លាមៗក្នុង ១ ឃ្លីក
+            3. ចុចផ្ទាំង **➕ បញ្ចូល / កែសម្រួលមុខម្ហូប** ដើម្បីបញ្ចូលមុខម្ហូបដោយដៃផ្ទាល់តាមការចង់បាន
             """)
-            if st.button("🚀 អនុវត្តគំរូស្ដង់ដារ MoEYS 2026 (វដ្តទី១) ជូនសាលានេះភ្លាមៗ", key="btn_quick_seed_tab1", type="primary"):
+            if st.button("🚀 អនុវត្តគំរូស្ដង់ដារ MoEYS 2026 (៧ ថ្ងៃ) ជូនសាលានេះភ្លាមៗ", key="btn_quick_seed_tab1", type="primary"):
                 apply_template_to_school(conn, sel_school, template_id="cycle_1", student_count=100)
                 st.success(f"✅ បានកំណត់គំរូស្ដង់ដារ MoEYS ជូនសាលា {sel_school} ជោគជ័យ!")
                 st.rerun()
         else:
             st.subheader(f"📅 កាលវិភាគមុខម្ហូបប្រចាំសប្ដាហ៍ (សាលាបឋមសិក្សា៖ {sel_school})")
             
-            # បង្ហាញជា Grid កាត ៦ ថ្ងៃនៃសប្ដាហ៍
+            # បង្ហាញជា Grid កាត ៧ ថ្ងៃនៃសប្ដាហ៍ (រួមទាំងថ្ងៃអាទិត្យ)
             day_colors = {
                 "ចន្ទ": ("#eff6ff", "#1d4ed8", "🟦"),
                 "អង្គារ": ("#fdf2f8", "#be185d", "🟪"),
@@ -978,13 +1986,14 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                 "ព្រហស្បតិ៍": ("#fffbeb", "#b45309", "🟧"),
                 "សុក្រ": ("#f0f9ff", "#0369a1", "🩵"),
                 "សៅរ៍": ("#faf5ff", "#7e22ce", "🟣"),
+                "អាទិត្យ": ("#fff1f2", "#be123c", "🔴"),
             }
 
-            # 2 Rows of 3 columns
             menus_by_day = {m["day_of_week"]: m for m in school_menus}
             
-            for row_idx, days_chunk in enumerate([["ចន្ទ", "អង្គារ", "ពុធ"], ["ព្រហស្បតិ៍", "សុក្រ", "សៅរ៍"]]):
-                cols = st.columns(3)
+            # 2 Rows: Row 1 has 4 days, Row 2 has 3 days
+            for row_idx, days_chunk in enumerate([["ចន្ទ", "អង្គារ", "ពុធ", "ព្រហស្បតិ៍"], ["សុក្រ", "សៅរ៍", "អាទិត្យ"]]):
+                cols = st.columns(len(days_chunk))
                 for col_idx, d_name in enumerate(days_chunk):
                     with cols[col_idx]:
                         bg_c, text_c, icon = day_colors.get(d_name, ("#f8fafc", "#334155", "⚪"))
@@ -1027,6 +2036,7 @@ def render_school_menu_section(conn, cursor, user_prov, user_dist, user_comm, us
                                 <div style="font-size: 0.85rem; color: #94a3b8;">មិនទាន់មានមុខម្ហូប</div>
                             </div>
                             """, unsafe_allow_html=True)
+
 
     # ================= TAB 2: អនុវត្តគំរូស្ដង់ដារ MoEYS SFIS =================
     with tab_seed:
